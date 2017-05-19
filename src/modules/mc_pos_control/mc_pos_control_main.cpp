@@ -115,8 +115,8 @@ private:
 
 	bool		_task_should_exit = false;			/**<true if task should exit */
 	bool		_gear_state_initialized = false;	/**<true if the gear state has been initialized */
-	bool 		_reset_pos_sp = true;  				/**<true if position setpoint needs a reset */
-	bool 		_reset_alt_sp = true; 				/**<true if altitude setpoint needs a reset */
+	bool 		_reset_sp_xy = true;  				/**<true if position setpoint needs a reset */
+	bool 		_reset_sp_z = true; 				/**<true if z setpoint needs a reset */
 	bool 		_do_reset_alt_pos_flag = true; 		/**< TODO: check if we need this */
 	bool		_mode_auto = false ;  				/**<true if in auot mode */
 	bool 		_pos_hold_engaged = false; 			/**<true if hold positon in xy desired */
@@ -317,21 +317,21 @@ private:
 	/**
 	 * Reset position setpoint to current position.
 	 *
-	 * This reset will only occur if the _reset_pos_sp flag has been set.
+	 * This reset will only occur if the _reset_sp_xy flag has been set.
 	 * The general logic is to first "activate" the flag in the flight
 	 * regime where a switch to a position control mode should hold the
 	 * very last position. Once switching to a position control mode
 	 * the last position is stored once.
 	 */
-	void		reset_pos_sp();
+	void		reset_sp_xy();
 
 	/**
 	 * Reset altitude setpoint to current altitude.
 	 *
-	 * This reset will only occur if the _reset_alt_sp flag has been set.
-	 * The general logic follows the reset_pos_sp() architecture.
+	 * This reset will only occur if the _reset_sp_z flag has been set.
+	 * The general logic follows the reset_sp_xy() architecture.
 	 */
-	void		reset_alt_sp();
+	void		reset_sp_z();
 
 	/**
 	 * Set position setpoint using manual control
@@ -518,12 +518,7 @@ MulticopterPositionControl::MulticopterPositionControl() :
 	_params_handles.tilt_max_land	= param_find("MPC_TILTMAX_LND");
 	_params_handles.man_tilt_max = param_find("MPC_MAN_TILT_MAX");
 	_params_handles.man_yaw_max = param_find("MPC_MAN_Y_MAX");
-<<<<<<< 2d46b4bf34b11c1095bd8ccc067953bca6e04cf7
-	_params_handles.global_yaw_max = param_find("MC_YAWRATE_MAX");
-=======
-
 	_params_handles.yaw_rate_max = param_find("MC_YAWRATE_MAX");
->>>>>>> mc_pos_control: better parameter name for yaw_rate_max
 	_params_handles.mc_att_yaw_p = param_find("MC_YAW_P");
 	_params_handles.hold_max_xy = param_find("MPC_HOLD_MAX_XY");
 	_params_handles.hold_max_z = param_find("MPC_HOLD_MAX_Z");
@@ -809,19 +804,19 @@ MulticopterPositionControl::poll_subscriptions()
 
 		/* we need either a valid position setpoint or a valid velocity setpoint */
 
-		if (PX4_ISFINITE(_pos_sp_triplet.current.lat) && PX4_ISFINITE(_pos_sp_triplet.current.lon)
-		    && PX4_ISFINITE(_pos_sp_triplet.current.alt) && _pos_sp_triplet.current.valid) {
+		if (PX4_ISFINITE(_pos_sp_triplet.current.x) && PX4_ISFINITE(_pos_sp_triplet.current.y)
+		    && PX4_ISFINITE(_pos_sp_triplet.current.z) && _pos_sp_triplet.current.valid) {
 			_pos_sp_triplet.current.valid = true;
 
-		} else if (PX4_ISFINITE(_pos_sp_triplet.current.alt) && _pos_sp_triplet.current.valid) {
+		} else if (PX4_ISFINITE(_pos_sp_triplet.current.z) && _pos_sp_triplet.current.valid) {
 			_pos_sp_triplet.current.valid = true;
 
 		} else {
 			_pos_sp_triplet.current.valid = false;
 		}
 
-		if (PX4_ISFINITE(_pos_sp_triplet.previous.lat) && PX4_ISFINITE(_pos_sp_triplet.previous.lon)
-		    && PX4_ISFINITE(_pos_sp_triplet.previous.alt) && _pos_sp_triplet.previous.valid) {
+		if (PX4_ISFINITE(_pos_sp_triplet.previous.x) && PX4_ISFINITE(_pos_sp_triplet.previous.y)
+		    && PX4_ISFINITE(_pos_sp_triplet.previous.z) && _pos_sp_triplet.previous.valid) {
 			_pos_sp_triplet.previous.valid = true;
 
 		} else {
@@ -856,10 +851,10 @@ MulticopterPositionControl::task_main_trampoline(int argc, char *argv[])
 }
 
 void
-MulticopterPositionControl::reset_pos_sp()
+MulticopterPositionControl::reset_sp_xy()
 {
-	if (_reset_pos_sp) {
-		_reset_pos_sp = false;
+	if (_reset_sp_xy) {
+		_reset_sp_xy = false;
 
 		// we have logic in the main function which chooses the velocity setpoint such that the attitude setpoint is
 		// continuous when switching into velocity controlled mode, therefore, we don't need to bother about resetting
@@ -870,10 +865,10 @@ MulticopterPositionControl::reset_pos_sp()
 }
 
 void
-MulticopterPositionControl::reset_alt_sp()
+MulticopterPositionControl::reset_sp_z()
 {
-	if (_reset_alt_sp) {
-		_reset_alt_sp = false;
+	if (_reset_sp_z) {
+		_reset_sp_z = false;
 
 		// we have logic in the main function which choosed the velocity setpoint such that the attitude setpoint is
 		// continuous when switching into velocity controlled mode, therefore, we don't need to bother about resetting
@@ -1277,14 +1272,14 @@ MulticopterPositionControl::set_manual_acceleration_xy(matrix::Vector2f &stick_x
 void
 MulticopterPositionControl::control_manual(float dt)
 {
-	/* Entering manual control from non-manual control mode, reset alt/pos setpoints */
+	/* Entering manual control from non-manual control mode, reset setpoints */
 	if (_mode_auto) {
 		_mode_auto = false;
 
-		/* Reset alt pos flags if resetting is enabled */
+		/* Reset pos flags if resetting is enabled */
 		if (_do_reset_alt_pos_flag) {
-			_reset_pos_sp = true;
-			_reset_alt_sp = true;
+			_reset_sp_xy = true;
+			_reset_sp_z = true;
 		}
 	}
 
@@ -1299,8 +1294,8 @@ MulticopterPositionControl::control_manual(float dt)
 		/* set vertical velocity setpoint with throttle stick, remapping of manual.z [0,1] to up and down command [-1,1] */
 		man_vel_sp(2) = -math::expo_deadzone((_manual.z - 0.5f) * 2.f, _z_vel_man_expo.get(), _hold_dz.get());
 
-		/* reset alt setpoint to current altitude if needed */
-		reset_alt_sp();
+		/* reset z setpoint to current altitude if needed */
+		reset_sp_z();
 	}
 
 	if (_control_mode.flag_control_position_enabled) {
@@ -1317,7 +1312,7 @@ MulticopterPositionControl::control_manual(float dt)
 		}
 
 		/* reset position setpoint to current position if needed */
-		reset_pos_sp();
+		reset_sp_xy();
 	}
 
 	/* prepare yaw to rotate into NED frame */
@@ -1543,7 +1538,7 @@ MulticopterPositionControl::control_offboard(float dt)
 			/* control velocity */
 
 			/* reset position setpoint to current position if needed */
-			reset_pos_sp();
+			reset_sp_xy();
 
 			if (fabsf(_pos_sp_triplet.current.vx) <= FLT_EPSILON &&
 			    fabsf(_pos_sp_triplet.current.vy) <= FLT_EPSILON &&
@@ -1588,8 +1583,8 @@ MulticopterPositionControl::control_offboard(float dt)
 
 		} else if (_control_mode.flag_control_climb_rate_enabled && _pos_sp_triplet.current.velocity_valid) {
 
-			/* reset alt setpoint to current altitude if needed */
-			reset_alt_sp();
+			/* reset z setpoint to current altitude if needed */
+			reset_sp_z();
 
 			if (fabsf(_pos_sp_triplet.current.vz) <= FLT_EPSILON &&
 			    _local_pos.z_valid) {
@@ -1620,8 +1615,8 @@ MulticopterPositionControl::control_offboard(float dt)
 	} else {
 		_hold_offboard_xy = false;
 		_hold_offboard_z = false;
-		reset_pos_sp();
-		reset_alt_sp();
+		reset_sp_xy();
+		reset_sp_z();
 	}
 }
 
@@ -1714,13 +1709,13 @@ void MulticopterPositionControl::control_auto(float dt)
 			_mode_auto = true;
 		}
 
-		_reset_pos_sp = true;
-		_reset_alt_sp = true;
+		_reset_sp_xy = true;
+		_reset_sp_z = true;
 	}
 
 	// Always check reset state of altitude and position control flags in auto
-	reset_pos_sp();
-	reset_alt_sp();
+	reset_sp_xy();
+	reset_sp_z();
 
 	bool current_setpoint_valid = false;
 	bool previous_setpoint_valid = false;
@@ -2364,11 +2359,11 @@ MulticopterPositionControl::calculate_velocity_setpoint(float dt)
 	}
 
 	if (!_control_mode.flag_control_position_enabled) {
-		_reset_pos_sp = true;
+		_reset_sp_xy = true;
 	}
 
 	if (!_control_mode.flag_control_altitude_enabled) {
-		_reset_alt_sp = true;
+		_reset_sp_z = true;
 	}
 
 	if (!_control_mode.flag_control_velocity_enabled) {
@@ -2957,11 +2952,12 @@ MulticopterPositionControl::task_main()
 		/* set default max velocity in xy to vel_max */
 		_vel_max_xy = _params.vel_max_xy;
 
-
 		/* reset flags when landed */
 		if (_vehicle_land_detected.landed) {
-			_reset_pos_sp = true;
-			_reset_alt_sp = true;
+
+			/* reset setpoints and integrals on arming */
+			_reset_sp_xy = true;
+			_reset_sp_z = true;
 			_do_reset_alt_pos_flag = true;
 			_mode_auto = false;
 			_pos_hold_engaged = false;
@@ -2990,10 +2986,10 @@ MulticopterPositionControl::task_main()
 
 		/* reset setpoints and integrators VTOL in FW mode */
 		if (_vehicle_status.is_vtol && !_vehicle_status.is_rotary_wing) {
-			_reset_alt_sp = true;
+			_reset_sp_z = true;
 			_reset_int_xy = true;
 			_reset_int_z = true;
-			_reset_pos_sp = true;
+			_reset_sp_xy = true;
 			_reset_yaw_sp = true;
 			_vel_sp_prev = _vel;
 		}
@@ -3051,8 +3047,8 @@ MulticopterPositionControl::task_main()
 
 		} else {
 			/* position controller disabled, reset setpoints */
-			_reset_pos_sp = true;
-			_reset_alt_sp = true;
+			_reset_sp_xy = true;
+			_reset_sp_z = true;
 			_do_reset_alt_pos_flag = true;
 			_mode_auto = false;
 			_reset_int_z = true;
