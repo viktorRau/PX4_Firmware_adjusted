@@ -231,16 +231,12 @@ public:
 
 	bool		abort_landing();
 
-	void 		global_to_local(struct position_setpoint_s *sp);
-
-	void 		global_to_local(struct mission_item_s *item);
-
 	void 		mission_item_to_navigator_item(struct navigator_item_s *nav_item, struct mission_item_s *mission_item);
 
 private:
 
 	bool		_task_should_exit{false};	/**< if true, sensor task should exit */
-	int		_navigator_task{-1};		/**< task handle for sensor task */
+	int		_navigator_task{ -1};		/**< task handle for sensor task */
 
 	orb_advert_t	_mavlink_log_pub{nullptr};	/**< the uORB advert to send messages over mavlink */
 
@@ -282,7 +278,7 @@ private:
 	hrt_abstime _ref_timestamp{0}; /** time stamp when reference for local frame has been updated */
 	float _ref_alt{0.0f}; /** local reference altitude */
 
-	int		_mission_instance_count{-1};	/**< instance count for the current mission */
+	int		_mission_instance_count{ -1};	/**< instance count for the current mission */
 
 	perf_counter_t	_loop_perf;			/**< loop performance counter */
 
@@ -314,9 +310,9 @@ private:
 	control::BlockParamFloat _param_fw_alt_acceptance_radius;	/**< acceptance radius for fixedwing altitude */
 	control::BlockParamFloat _param_mc_alt_acceptance_radius;	/**< acceptance radius for multicopter altitude */
 
-	float _mission_cruising_speed_mc{-1.0f};
-	float _mission_cruising_speed_fw{-1.0f};
-	float _mission_throttle{-1.0f};
+	float _mission_cruising_speed_mc{ -1.0f};
+	float _mission_cruising_speed_fw{ -1.0f};
+	float _mission_throttle{ -1.0f};
 
 	// update subscriptions
 	void		fw_pos_ctrl_status_update(bool force = false);
@@ -344,7 +340,7 @@ private:
 	/**
 	 * Translate mission item to a position setpoint.
 	 */
-	void		mission_item_to_position_setpoint(const mission_item_s *item, position_setpoint_s *sp);
+	void		navigator_item_to_position_setpoint(const mission_item_s *item, position_setpoint_s *sp);
 
 	/**
 	 * Publish a new position setpoint triplet for position controllers
