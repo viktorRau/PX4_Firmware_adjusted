@@ -426,10 +426,13 @@ Navigator::task_main()
 				struct position_setpoint_triplet_s *curr = get_position_setpoint_triplet();
 
 				// store current position as previous position and goal as next
-				rep->previous.yaw = get_global_position()->yaw;
 				rep->previous.lat = get_global_position()->lat;
 				rep->previous.lon = get_global_position()->lon;
 				rep->previous.alt = get_global_position()->alt;
+				rep->previous.x = get_local_position()->x;
+				rep->previous.y = get_local_position()->y;
+				rep->previous.z = get_local_position()->z;
+				rep->previous.yaw = get_local_position()->yaw;
 
 				rep->current.loiter_radius = get_loiter_radius();
 				rep->current.loiter_direction = 1;
@@ -472,6 +475,9 @@ Navigator::task_main()
 					rep->current.alt = get_global_position()->alt;
 				}
 
+				map_projection_project(get_local_reference_pos(), rep->current.lat, rep->current.lon, &rep->current.x, &rep->current.y);
+				rep->current.z = - (rep->current.alt - get_local_reference_alt());
+				rep->current.yaw = get_local_position()->yaw;
 				rep->previous.valid = true;
 				rep->current.valid = true;
 				rep->next.valid = false;
@@ -480,10 +486,14 @@ Navigator::task_main()
 				struct position_setpoint_triplet_s *rep = get_takeoff_triplet();
 
 				// store current position as previous position and goal as next
-				rep->previous.yaw = get_global_position()->yaw;
 				rep->previous.lat = get_global_position()->lat;
 				rep->previous.lon = get_global_position()->lon;
 				rep->previous.alt = get_global_position()->alt;
+
+				rep->previous.x = get_local_position()->x;
+				rep->previous.y = get_local_position()->y;
+				rep->previous.z = get_local_position()->z;
+				rep->previous.yaw = get_local_position()->yaw;
 
 				rep->current.loiter_radius = get_loiter_radius();
 				rep->current.loiter_direction = 1;
@@ -509,6 +519,10 @@ Navigator::task_main()
 				}
 
 				rep->current.alt = cmd.param7;
+
+				map_projection_project(get_local_reference_pos(), rep->current.lat, rep->current.lon, &rep->current.x, &rep->current.y);
+				rep->current.z = - (rep->current.alt - get_local_reference_alt());
+				rep->previous.yaw = get_local_position()->yaw;
 
 				rep->current.valid = true;
 				rep->next.valid = false;
@@ -699,6 +713,7 @@ Navigator::task_main()
 		if (_navigation_mode == nullptr && !_pos_sp_triplet_published_invalid_once) {
 			_pos_sp_triplet_published_invalid_once = true;
 			reset_triplets();
+
 		}
 
 		if (_pos_sp_triplet_updated) {
