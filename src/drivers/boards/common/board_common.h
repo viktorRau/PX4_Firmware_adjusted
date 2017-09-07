@@ -84,7 +84,7 @@
  *
  * The PX4_xxxx_BUS_FIRST_CS and PX4_xxxxx_BUS_LAST_CS
  * #define PX4_SENSORS_BUS_FIRST_CS  PX4_SPIDEV_ICM_20689
- *  #define PX4_SENSORS_BUS_LAST_CS   PX4_SPIDEV_BMI055_ACCEL
+ * #define PX4_SENSORS_BUS_LAST_CS   PX4_SPIDEV_BMI055_ACCEL
  *
  *
  */
@@ -293,7 +293,7 @@ typedef enum board_power_button_state_notification_e {
 
 typedef int (*power_button_state_notification_t)(board_power_button_state_notification_e request);
 
-/* Defined the types used for board UUID and MFG UID
+/* Defined the types used for board UUID, MFG UID and PX4 GUID
  *
  * A type suitable for holding the byte format of the UUID
  *
@@ -305,22 +305,51 @@ typedef int (*power_button_state_notification_t)(board_power_button_state_notifi
  *       I was bit 95 and L was bit 64
  *
  * Since the string was used by some manufactures to identify the units
- * it must be preserved.
+ * it must be preserved. DEPRECATED - This will be removed in PX4 Release
+ * 1.7.0.
  *
- * For new targets moving forward we will use
- *      IJKL EFGH ABCD
+ * For new targets moving forward we will use an 18 byte globally unique
+ * PX4 GUID in the form:
+ *
+ *           <ARCH MSD><ARCH LSD>[MNOP] IJKL EFGH ABCD
+ *
+ *  Where <ARCH MSD><ARCH LSD> are a monotonic ordinal number assigned by
+ *  PX4 to a chip architecture (PX4_SOC_ARCH_ID). The 2 bytes are used to
+ *  create a globally unique ID when prepended to a padded CPU UUID.
+ *
+ *  In the case where the MFG UUID is shorter than 16 bytes it will be
+ *  padded with 0's starting at offset [2] until
+ *  PX4_GUID_BYTE_LENGTH-PX4_CPU_UUID_BYTE_LENGTH -1
+ *
+ *  I.E. For the STM32
+ *  offset:0         1     2  3  4  5  6             -            17
+ *    <ARCH MSD><ARCH LSD>[0][0][0][0]<MSD CPU UUID>...<LSD CPU UUID>
+ *
+ *  I.E. For the Kinetis
+ *  offset:0         1         2         -           17
+ *    <ARCH MSD><ARCH LSD><MSD CPU UUID>...<LSD CPU UUID>
  */
 
-/* A type suitable for defining the 8 bit format of the UUID */
+/* Define the PX4 GUID lenght and format size */
+#define PX4_GUID_BYTE_LENGTH              18
+#define PX4_GUID_FORMAT_SIZE              ((2*PX4_GUID_BYTE_LENGTH)+1)
+
+/* DEPRICATED as of 1.7.0 A type suitable for defining the 8 bit format of the CPU UUID */
 typedef uint8_t uuid_byte_t[PX4_CPU_UUID_BYTE_LENGTH];
 
-/* A type suitable for defining the 32bit format of the UUID */
+/* DEPRICATED as of 1.7.0  A type suitable for defining the 32bit format of the CPU UUID */
 typedef uint32_t uuid_uint32_t[PX4_CPU_UUID_WORD32_LENGTH];
 
 /* A type suitable for defining the 8 bit format of the MFG UID
  * This is always returned as MSD @ index 0 -LSD @ index PX4_CPU_MFGUID_BYTE_LENGTH-1
  */
 typedef uint8_t mfguid_t[PX4_CPU_MFGUID_BYTE_LENGTH];
+
+/* A type suitable for defining the 8 bit format of the px4 globally unique
+ * PX4 GUID. This is always returned as MSD @ index 0 -LSD @ index
+ * PX4_CPU_GUID_BYTE_LENGTH-1
+ */
+typedef uint8_t px4_guid_t[PX4_GUID_BYTE_LENGTH];
 
 /************************************************************************************
  * Private Functions
@@ -472,7 +501,7 @@ __EXPORT int board_get_hw_revision(void);
 
 #if !defined(BOARD_OVERRIDE_UUID)
 /************************************************************************************
- * Name: board_get_uuid
+ * Name: board_get_uuid DEPRICATED use board_get_px4_guid
  *
  * Description:
  *   All boards either provide a way to read a uuid of PX4_CPU_UUID_BYTE_LENGTH
@@ -481,10 +510,10 @@ __EXPORT int board_get_hw_revision(void);
  *
  ************************************************************************************/
 
-__EXPORT void board_get_uuid(uuid_byte_t uuid_bytes);
+__EXPORT void board_get_uuid(uuid_byte_t uuid_bytes); // DEPRICATED use board_get_px4_guid
 
 /************************************************************************************
- * Name: board_get_uuid32
+ * Name: board_get_uuid32 DEPRICATED use board_get_px4_guid
  *
  * Description:
  *   All boards either provide a way to read a uuid of PX4_CPU_UUID_WORD32_LENGTH
@@ -499,10 +528,10 @@ __EXPORT void board_get_uuid(uuid_byte_t uuid_bytes);
  *	 PX4_CPU_UUID_WORD32_FORMAT_ORDER
  *
  ************************************************************************************/
-__EXPORT void board_get_uuid32(uuid_uint32_t uuid_words);
+__EXPORT void board_get_uuid32(uuid_uint32_t uuid_words); // DEPRICATED use board_get_px4_guid
 
 /************************************************************************************
- * Name: board_get_uuid32_formated
+ * Name: board_get_uuid32_formated DEPRICATED use board_get_px4_guid_formated
  *
  * Description:
  *   All boards either provide a way to retrieve a uuid and format it
@@ -523,7 +552,7 @@ __EXPORT void board_get_uuid32(uuid_uint32_t uuid_words);
  ************************************************************************************/
 __EXPORT int board_get_uuid32_formated(char *format_buffer, int size,
 				       const char *format,
-				       const char *seperator);
+				       const char *seperator); // DEPRICATED use board_get_px4_guid_formated
 #endif // !defined(BOARD_OVERRIDE_UUID)
 
 #if !defined(BOARD_OVERRIDE_MFGUID)
@@ -541,7 +570,7 @@ __EXPORT int board_get_uuid32_formated(char *format_buffer, int size,
 int board_get_mfguid(mfguid_t mfgid);
 
 /************************************************************************************
- * Name: board_get_mfguid_formated
+ * Name: board_get_mfguid_formated DEPRICATED use board_get_px4_guid_formated
  *
  * Description:
  *   All boards either provide a way to retrieve a formatted string of the
@@ -549,8 +578,62 @@ int board_get_mfguid(mfguid_t mfgid);
  *
  ************************************************************************************/
 
-int board_get_mfguid_formated(char *format_buffer, int size);
+int board_get_mfguid_formated(char *format_buffer, int size); // DEPRICATED use board_get_px4_guid_formated
 #endif // !defined(BOARD_OVERRIDE_MFGUID)
+
+#if !defined(BOARD_OVERRIDE_PX4_GUID)
+/************************************************************************************
+ * Name: board_get_px4_guid
+ *
+ * Description:
+ *   All boards either provide a way to retrieve a PX4 Globally unique ID or
+ *   define BOARD_OVERRIDE_PX4_GUID.
+ *   The GUID is returned as an array of bytes in MSD @ index 0 - LSD @ index
+ *   PX4_PX4_GUID_BYTE_LENGTH-1
+ *
+ *   The form of the GUID is as follows:
+ *  offset:0         1         2         -           17
+ *    <ARCH MSD><ARCH LSD><MSD CPU UUID>...<LSD CPU UUID> *
+ *
+ *  Where <ARCH MSD><ARCH LSD> are a monotonic ordinal number assigned by
+ *  PX4 to a chip architecture (PX4_SOC_ARCH_ID). The 2 bytes are used to
+ *  create a globally unique ID when prepended to a padded CPU ID.
+ *
+ *  In the case where the CPU's UUID is shorter than 16 bytes it will be
+ *  padded with 0's starting at offset [2] until
+ *  PX4_CPU_MFGUID_BYTE_LENGTH-PX4_CPU_UUID_BYTE_LENGTH -1
+ *  I.E. For the STM32
+ *  offset:0         1     2  3  4  5  6             -            17
+ *    <ARCH MSD><ARCH LSD>[0][0][0][0]<MSD CPU UUID>...<LSD CPU UUID>
+ *
+ *  I.E. For as CPU with a 16 byte UUID
+ *  offset:0         1         2         -           17
+ *    <ARCH MSD><ARCH LSD><MSD CPU UUID>...<LSD CPU UUID>
+ *
+ ************************************************************************************/
+
+int board_get_px4_guid(px4_guid_t guid);
+
+/************************************************************************************
+ * Name: board_get_mfguid_formated
+ *
+ * Description:
+ *   All boards either provide a way to retrieve a formatted string of the
+ *   manafactuers Uniqe ID or define BOARD_OVERRIDE_PX4_GUID
+ *
+ * format_buffer - A buffer to receive the formated px4 guid
+ * size          - Size of the buffer provided.
+ *               - Normally this would be PX4_GUID_FORMAT_SIZE.
+ *                 If the size is less than PX4_GUID_FORMAT_SIZE
+ *                 the string returned will be truncated from the
+ *                 MSD end and even in length.
+ *
+ * returns       - The number of printable characters.
+ *
+ ************************************************************************************/
+
+int board_get_px4_guid_formated(char *format_buffer, int size);
+#endif // !defined(BOARD_OVERRIDE_PX4_GUID)
 
 /************************************************************************************
  * Name: board_mcu_version
