@@ -16,6 +16,7 @@ set(config_module_list
 	#
 	# Board support modules
 	#
+	drivers/boards/rpi
 	drivers/device
 	drivers/airspeed
 	drivers/ets_airspeed
