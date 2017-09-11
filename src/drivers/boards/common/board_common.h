@@ -362,6 +362,7 @@ typedef uint8_t px4_guid_t[PX4_GUID_BYTE_LENGTH];
 /************************************************************************************
  * Public Functions
  ************************************************************************************/
+__BEGIN_DECLS
 
 /************************************************************************************
  * Name: board_dma_alloc_init
@@ -578,7 +579,6 @@ __EXPORT int board_get_hw_revision(void);
 #define board_get_hw_revision() 0
 #endif
 
-#if !defined(BOARD_OVERRIDE_UUID)
 /************************************************************************************
  * Name: board_get_uuid DEPRICATED use board_get_px4_guid
  *
@@ -654,15 +654,13 @@ __EXPORT void board_get_uuid32(uuid_uint32_t uuid_words); // DEPRICATED use boar
 __EXPORT int board_get_uuid32_formated(char *format_buffer, int size,
 				       const char *format,
 				       const char *seperator); // DEPRICATED use board_get_px4_guid_formated
-#endif // !defined(BOARD_OVERRIDE_UUID)
 
-#if !defined(BOARD_OVERRIDE_MFGUID)
 /************************************************************************************
  * Name: board_get_mfguid
  *
  * Description:
  *   All boards either provide a way to retrieve a manufactures Unique ID or
- *   define BOARD_OVERRIDE_MFGUID.
+ *   define BOARD_OVERRIDE_UUID.
  *    The MFGUID is returned as an array of bytes in
  *    MSD @ index 0 - LSD @ index PX4_CPU_MFGUID_BYTE_LENGTH-1
  *
@@ -697,15 +695,13 @@ int board_get_mfguid(mfguid_t mfgid);
  ************************************************************************************/
 
 int board_get_mfguid_formated(char *format_buffer, int size); // DEPRICATED use board_get_px4_guid_formated
-#endif // !defined(BOARD_OVERRIDE_MFGUID)
 
-#if !defined(BOARD_OVERRIDE_PX4_GUID)
 /************************************************************************************
  * Name: board_get_px4_guid
  *
  * Description:
  *   All boards either provide a way to retrieve a PX4 Globally unique ID or
- *   define BOARD_OVERRIDE_PX4_GUID.
+ *   define BOARD_OVERRIDE_UUID.
  *
  *   The form of the GUID is as follows:
  *  offset:0         1         2         -           17
@@ -760,7 +756,6 @@ int board_get_px4_guid(px4_guid_t guid);
  ************************************************************************************/
 
 int board_get_px4_guid_formated(char *format_buffer, int size);
-#endif // !defined(BOARD_OVERRIDE_PX4_GUID)
 
 /************************************************************************************
  * Name: board_mcu_version
@@ -840,3 +835,4 @@ static inline int board_shutdown(void) { return -EINVAL; }
  ************************************************************************************/
 
 __EXPORT void board_gpio_init(const uint32_t list[], int count);
+__END_DECLS
