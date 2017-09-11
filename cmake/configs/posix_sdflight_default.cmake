@@ -28,6 +28,7 @@ endif()
 set(CONFIG_SHMEM "1")
 
 set(config_module_list
+	drivers/boards/eagle
 	drivers/device
 	drivers/blinkm
 	drivers/linux_sbus
