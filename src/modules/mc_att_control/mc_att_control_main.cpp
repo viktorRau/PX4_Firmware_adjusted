@@ -35,9 +35,10 @@
  * @file mc_att_control_main.cpp
  * Multicopter attitude controller.
  *
- * Publication for the desired attitude tracking:
- * Daniel Mellinger and Vijay Kumar. Minimum Snap Trajectory Generation and Control for Quadrotors.
- * Int. Conf. on Robotics and Automation, Shanghai, China, May 2011.
+ * Publication documenting this type of Quaternion Attitude Control:
+ * Nonlinear Quadrocopter Attitude Control (2013)
+ * by Dario Brescianini, Markus Hehn and Raffaello D’Andrea
+ * Institute for Dynamic Systems and Control (IDSC), ETH Zurich
  *
  * @author Lorenz Meier		<lorenz@px4.io>
  * @author Anton Babushkin	<anton.babushkin@me.com>
@@ -53,6 +54,7 @@
  * If rotation matrix setpoint is invalid it will be generated from Euler angles for compatibility with old position controllers.
  */
 
+#include <float.h>
 #include <conversion/rotation.h>
 #include <drivers/drv_hrt.h>
 #include <lib/geo/geo.h>
@@ -848,77 +850,26 @@ void
 MulticopterAttitudeControl::control_attitude(float dt)
 {
 	vehicle_attitude_setpoint_poll();
-
 	_thrust_sp = _v_att_sp.thrust;
 
-	/* construct attitude setpoint rotation matrix */
-	math::Quaternion q_sp(_v_att_sp.q_d[0], _v_att_sp.q_d[1], _v_att_sp.q_d[2], _v_att_sp.q_d[3]);
-	math::Matrix<3, 3> R_sp = q_sp.to_dcm();
+	using namespace matrix;
+	float yaw_w = .4f;
 
-	/* get current rotation matrix from control state quaternions */
-	math::Quaternion q_att(_v_att.q[0], _v_att.q[1], _v_att.q[2], _v_att.q[3]);
-	math::Matrix<3, 3> R = q_att.to_dcm();
+	/* get estimated and desired vehicle attitude */
+	Quatf q(_v_att.q);
+	Quatf qd(_v_att_sp.q_d);
 
-	/* all input data is ready, run controller itself */
+	/* ensure quaternions are exactly normalized because acosf(1.00001) == NaN */
+	q.normalize();
+	qd.normalize();
 
-	/* try to move thrust vector shortest way, because yaw response is slower than roll/pitch */
-	math::Vector<3> R_z(R(0, 2), R(1, 2), R(2, 2));
-	math::Vector<3> R_sp_z(R_sp(0, 2), R_sp(1, 2), R_sp(2, 2));
+	/* full quaternion attitude control, qe is rotation from q to qd */
+	Quatf qe = q.inversed() * qd;
 
-	/* axis and sin(angle) of desired rotation */
-	math::Vector<3> e_R = R.transposed() * (R_z % R_sp_z);
-
-	/* calculate angle error */
-	float e_R_z_sin = e_R.length();
-	float e_R_z_cos = R_z * R_sp_z;
-
-	/* calculate weight for yaw control */
-	float yaw_w = R_sp(2, 2) * R_sp(2, 2);
-
-	/* calculate rotation matrix after roll/pitch only rotation */
-	math::Matrix<3, 3> R_rp;
-
-	if (e_R_z_sin > 0.0f) {
-		/* get axis-angle representation */
-		float e_R_z_angle = atan2f(e_R_z_sin, e_R_z_cos);
-		math::Vector<3> e_R_z_axis = e_R / e_R_z_sin;
-
-		e_R = e_R_z_axis * e_R_z_angle;
-
-		/* cross product matrix for e_R_axis */
-		math::Matrix<3, 3> e_R_cp;
-		e_R_cp.zero();
-		e_R_cp(0, 1) = -e_R_z_axis(2);
-		e_R_cp(0, 2) = e_R_z_axis(1);
-		e_R_cp(1, 0) = e_R_z_axis(2);
-		e_R_cp(1, 2) = -e_R_z_axis(0);
-		e_R_cp(2, 0) = -e_R_z_axis(1);
-		e_R_cp(2, 1) = e_R_z_axis(0);
-
-		/* rotation matrix for roll/pitch only rotation */
-		R_rp = R * (_I + e_R_cp * e_R_z_sin + e_R_cp * e_R_cp * (1.0f - e_R_z_cos));
-
-	} else {
-		/* zero roll/pitch rotation */
-		R_rp = R;
-	}
-
-	/* R_rp and R_sp has the same Z axis, calculate yaw error */
-	math::Vector<3> R_sp_x(R_sp(0, 0), R_sp(1, 0), R_sp(2, 0));
-	math::Vector<3> R_rp_x(R_rp(0, 0), R_rp(1, 0), R_rp(2, 0));
-	e_R(2) = atan2f((R_rp_x % R_sp_x) * R_sp_z, R_rp_x * R_sp_x) * yaw_w;
-
-	if (e_R_z_cos < 0.0f) {
-		/* for large thrust vector rotations use another rotation method:
-		 * calculate angle and axis for R -> R_sp rotation directly */
-		math::Quaternion q_error;
-		q_error.from_dcm(R.transposed() * R_sp);
-		math::Vector<3> e_R_d = q_error(0) >= 0.0f ? q_error.imag()  * 2.0f : -q_error.imag() * 2.0f;
-
-		/* use fusion of Z axis based rotation and direct rotation */
-		float direct_w = e_R_z_cos * e_R_z_cos * yaw_w;
-		e_R = e_R * (1.0f - direct_w) + e_R_d * direct_w;
-	}
+	/* using sin(alpha/2) scaled rotation axis as attitude error (see quaternion definition by axis angle)
+	 * also taking care of the antipodal unit quaternion ambiguity */
+	Vector3f eq = 2.f * math::sign(qe(0)) * qe.imag();
+	math::Vector<3> e_R(eq.data());
 
 	/* calculate angular rates setpoint */
 	_rates_sp = _params.att_p.emult(e_R);
