@@ -326,6 +326,7 @@ Navigator::task_main()
 			if (fds[0].revents & POLLIN) {
 				/* success, local pos is available */
 				local_position_update();
+				local_reference_update();
 			}
 		}
 
@@ -354,15 +355,6 @@ Navigator::task_main()
 				have_geofence_position_data = true;
 			}
 		}
-
-		/* local position updated */
-		orb_check(_local_pos_sub, &updated);
-
-		if (updated) {
-			local_position_update();
-			local_reference_update();
-		}
-
 
 		/* sensors combined updated */
 		orb_check(_sensor_combined_sub, &updated);
