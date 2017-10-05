@@ -125,6 +125,8 @@ set(msg_files
 	vehicle_status_flags.msg
 	vtol_vehicle_status.msg
 	wind_estimate.msg
+	trajectory_setpoint.msg
+	logging_hippocampus.msg
 	)
 
 px4_add_git_submodule(TARGET git_gencpp PATH "Tools/gencpp")

@@ -158,6 +158,34 @@ public:
 	}
 
 	/**
+	 * access to a complete row
+	 */
+	Vector<N> get_rowValues(unsigned int row)
+	{
+	    Vector<N> res;
+
+        for (unsigned i = 0; i < N; i++) {
+			res.data[i] = data[row][i];
+		}
+
+		return res;
+	}
+
+    /**
+	 * access to a complete column
+	 */
+	Vector<M> get_colValues(unsigned int col)
+	{
+	    Vector<M> res;
+
+        for (unsigned i = 0; i < M; i++) {
+			res.data[i] = data[i][col];
+		}
+
+		return res;
+	}
+
+	/**
 	 * get rows number
 	 */
 	unsigned int get_rows() const
