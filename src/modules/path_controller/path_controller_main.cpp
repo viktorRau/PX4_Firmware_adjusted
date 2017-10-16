@@ -92,7 +92,7 @@ class HippocampusPathControl
 {
 public:
 	// Constructor
-	HippocampusPathControl();
+	HippocampusPathControl(char *type_ctrl);
 
 	// Destructor, also kills the main task
 	~HippocampusPathControl();
@@ -137,6 +137,9 @@ private:
 	float               t_ges;
 	float               counter;
 
+    // controller type
+	char type_array[100];
+
 	math::Matrix<3, 3>  _I;				// identity matrix
 
 	struct {
@@ -160,6 +163,9 @@ private:
 		param_t K_M;
 		param_t L;
 		param_t OG;
+		param_t ROLL;
+		param_t PITCH;
+		param_t YAW;
 	}		_params_handles;		// handles for to find parameters
 
 	struct {
@@ -177,6 +183,9 @@ private:
 		// Lifting arm
 		float L;
 		float OG;                       // operating grade
+		float roll;
+		float pitch;
+		float yaw;
 	}		_params;
 
 	// actualizes position data
@@ -212,7 +221,7 @@ HippocampusPathControl	*g_control;
 }
 
 // constructor of class HippocampusPathControl
-HippocampusPathControl::HippocampusPathControl() :
+HippocampusPathControl::HippocampusPathControl(char *type_ctrl) :
 
 	// First part is about function which are called with the constructor
 	_task_should_exit(false),
@@ -252,6 +261,9 @@ HippocampusPathControl::HippocampusPathControl() :
 	_params.D.zero();
 	_params.L = 0.0f;
 	_params.OG = 0.0f;
+	_params.roll = 0.0f;
+	_params.pitch = 0.0f;
+	_params.yaw = 0.0f;
 
 	// set initial values of vectors to zero
 	_position_0.zero();
@@ -261,6 +273,16 @@ HippocampusPathControl::HippocampusPathControl() :
 
 	t_ges = 0.0;
 	counter = 0.0;
+
+	// allocate controller type
+	strcpy(&type_array[0], type_ctrl);
+
+	if (!strcmp(type_array, "full")) {
+		PX4_INFO("Start full geometric controller!");
+
+	} else if (!strcmp(type_array, "attitude")) {
+		PX4_INFO("Start attitude controller!");
+	}
 
 	// allocate Identity matrix
 	_I.identity();
@@ -286,6 +308,9 @@ HippocampusPathControl::HippocampusPathControl() :
 	_params_handles.K_M		        = 	param_find("PC_K_M");
 	_params_handles.L	            = 	param_find("PC_L");
 	_params_handles.OG	            = 	param_find("PC_OG");
+	_params_handles.ROLL	        = 	param_find("PC_ROLL");
+	_params_handles.PITCH	        = 	param_find("PC_PITCH");
+	_params_handles.YAW	            = 	param_find("PC_YAW");
 
 	// fetch initial parameter values
 	parameters_update();
@@ -361,6 +386,12 @@ int HippocampusPathControl::parameters_update()
 	_params.L = v;
     param_get(_params_handles.OG, &v);
 	_params.OG = v;
+	param_get(_params_handles.ROLL, &v);
+	_params.roll = v;
+	param_get(_params_handles.PITCH, &v);
+	_params.pitch = v;
+	param_get(_params_handles.YAW, &v);
+	_params.yaw = v;
 
 	return OK;
 }
@@ -476,7 +507,7 @@ void HippocampusPathControl::path_control(float dt)
 
 	// desired force and outputs
 	math::Vector<3> F_des;
-	float u_1;
+	float u_1 = 0.0f;
 	math::Vector<3> u_24;
 
 	// rotation matrices and angular velocity vectors
@@ -509,34 +540,75 @@ void HippocampusPathControl::path_control(float dt)
 	math::Vector<3> x_B_des;                                                    // orientation body x-axis desired
 	math::Vector<3> y_B_des;                                                    // orientation body y-axis desired
 	math::Vector<3> z_B_des;                                                    // orientation body z-axis desired
-	math::Vector<3> z_C_des(0, -sinf(_v_traj_sp.roll), cosf(_v_traj_sp.roll));    // orientation C-Coordinate system desired
-	math::Vector<3> y_C_des(0, cosf(_v_traj_sp.roll), sinf(_v_traj_sp.roll));     // orientation C-Coordinate system desired
 
-	// projection on x_B
-	math::Vector<3> h_w;
-	math::Vector<3> h_w_des;
+	if (!strcmp(type_array, "full")) {
+	    math::Vector<3> z_C_des(0, -sinf(_v_traj_sp.roll), cosf(_v_traj_sp.roll));    // orientation C-Coordinate system desired
+	    math::Vector<3> y_C_des(0, cosf(_v_traj_sp.roll), sinf(_v_traj_sp.roll));     // orientation C-Coordinate system desired
 
-	// thrust input
-	e_p = r - r_T;          // calculate position error
-	e_v = rd - rd_T;        // calculate velocity error
+	    // projection on x_B
+	    math::Vector<3> h_w;
+	    math::Vector<3> h_w_des;
 
-	F_des = -_params.K_p * e_p - _params.K_v * e_v + rdd_T * _params.m + _params.D * rd_T; // calculate desired force
+	    // thrust input
+	    e_p = r - r_T;          // calculate position error
+	    e_v = rd - rd_T;        // calculate velocity error
 
-	u_1 = F_des * x_B;                                 // calculate desired thrust
+	    F_des = -_params.K_p * e_p - _params.K_v * e_v + rdd_T * _params.m + _params.D * rd_T; // calculate desired force
 
-	// calculate orientation vectors
-	x_B_des = F_des / F_des.length();
+	    u_1 = F_des * x_B;                                 // calculate desired thrust
 
-	// check wether y_B_des is closer to the actual position or z_B_des
-	// TO DO: Find a fix for singularity
-	y_B_des = z_C_des % x_B_des;
-	y_B_des = y_B_des / y_B_des.length();
-	z_B_des = x_B_des % y_B_des;
+	    // calculate orientation vectors
+	    x_B_des = F_des / F_des.length();
 
-	// calculate desired rotation matrix
-	R_des.set_col(0, x_B_des);
-	R_des.set_col(1, y_B_des);
-	R_des.set_col(2, z_B_des);
+	    // check wether y_B_des is closer to the actual position or z_B_des
+	    // TO DO: Find a fix for singularity
+	    y_B_des = z_C_des % x_B_des;
+	    y_B_des = y_B_des / y_B_des.length();
+	    z_B_des = x_B_des % y_B_des;
+
+	    // calculate desired rotation matrix
+	    R_des.set_col(0, x_B_des);
+	    R_des.set_col(1, y_B_des);
+	    R_des.set_col(2, z_B_des);
+
+	    // Calculate desired angular velocity
+	    h_w_des = (rddd_T * _params.m + _params.D * rdd_T - (x_B_des * ((rddd_T * _params.m + _params.D * rdd_T) * x_B_des)))
+		    * (1 / u_1);
+	    //h_w_des = (rddd_T-x_B_des*(x_B_des*rddd_T))*(_params.m/u_1);
+
+	    double q_ang = -h_w_des * z_B_des;
+	    double r_ang = -h_w_des * y_B_des;
+	    double p_ang = _v_traj_sp.droll * x_B_des(0);
+	    w_BW_T = x_B_des * p_ang + y_B_des * q_ang + z_B_des * r_ang;
+
+	    // calculate the angular velocity error
+	    e_w = R.transposed() * w_BW - R.transposed() * w_BW_T;
+
+	} else if (!strcmp(type_array, "attitude")) {
+	    float c_roll = cosf(_params.roll);
+	    float s_roll = sinf(_params.roll);
+	    float c_pitch = cosf(_params.pitch);
+	    float s_pitch = sinf(_params.pitch);
+	    float c_yaw = cosf(_params.yaw);
+	    float s_yaw = sinf(_params.yaw);
+
+	    R_des(0,0) = c_pitch*c_yaw;
+	    R_des(0,1) = s_roll*s_pitch*c_yaw - c_roll*s_yaw;
+	    R_des(0,2) = c_roll*s_pitch*c_yaw + s_roll*s_yaw;
+	    R_des(1,0) = c_pitch*s_yaw;
+	    R_des(1,1) = s_roll*s_pitch*s_yaw + c_roll*c_yaw;
+	    R_des(1,2) = c_roll*s_pitch*s_yaw - s_roll*c_yaw;
+	    R_des(2,0) = -s_pitch;
+	    R_des(2,1) = s_roll*c_pitch;
+	    R_des(2,2) = c_roll*c_pitch;
+
+	    x_B_des = R_des.get_colValues(0);
+	    y_B_des = R_des.get_colValues(1);
+	    z_B_des = R_des.get_colValues(2);
+
+	    u_1 = 0.0f;
+	    e_w = R.transposed() * w_BW;
+	}
 
 	// extracting one rotation from the rotation matrix, necessary due to singularities in the (R_des^T * R - R^T * R_des) approach
 	// rotation axis for rotation between x_B and x_B_des, in B coordinates (not normalized yet)
@@ -579,19 +651,6 @@ void HippocampusPathControl::path_control(float dt)
 	//R_py and R_des have the same X axis, calculate roll error
 	math::Vector<3> z_B_py(R_py(0, 2), R_py(1, 2), R_py(2, 2));
 	e_r(0) = atan2f((z_B_des % z_B_py) * x_B_des, z_B_py * z_B_des);
-
-	// Calculate desired angular velocity
-	h_w_des = (rddd_T * _params.m + _params.D * rdd_T - (x_B_des * ((rddd_T * _params.m + _params.D * rdd_T) * x_B_des)))
-		  * (1 / u_1);
-	//h_w_des = (rddd_T-x_B_des*(x_B_des*rddd_T))*(_params.m/u_1);
-
-	double q_ang = -h_w_des * z_B_des;
-	double r_ang = -h_w_des * y_B_des;
-	double p_ang = _v_traj_sp.droll * x_B_des(0);
-	w_BW_T = x_B_des * p_ang + y_B_des * q_ang + z_B_des * r_ang;
-
-	// calculate the angular velocity error
-	e_w = R.transposed() * w_BW - R.transposed() * w_BW_T;
 
 	// calculate input over feedback loop
 	u_24 = -_params.K_r * e_r - _params.K_w * e_w;
@@ -673,7 +732,7 @@ void HippocampusPathControl::path_control(float dt)
 
 		counter = counter + 0.5f;            // every 0.5 seconds
 
-		/*PX4_INFO("e_p:\t%8.2f\t%8.2f\t%8.2f",
+		PX4_INFO("e_p:\t%8.2f\t%8.2f\t%8.2f",
 			 (double)e_p(0),
 			 (double)e_p(1),
 			 (double)e_p(2));
@@ -681,14 +740,14 @@ void HippocampusPathControl::path_control(float dt)
 			 (double)e_v(0),
 			 (double)e_v(1),
 			 (double)e_v(2));
-		PX4_INFO("e_r:\t%8.2f\t%8.2f\t%8.2f\n",
+		PX4_INFO("e_r:\t%8.2f\t%8.2f\t%8.2f",
 			 (double)e_r(0),
 			 (double)e_r(1),
 			 (double)e_r(2));
 		PX4_INFO("e_w:\t%8.2f\t%8.2f\t%8.2f\n",
 			 (double)e_w(0),
 			 (double)e_w(1),
-			 (double)e_w(2));*/
+			 (double)e_w(2));
 	}
 
 }
@@ -819,12 +878,12 @@ int HippocampusPathControl::start()
 int path_controller_main(int argc, char *argv[])
 {
 	if (argc < 2) {
-		warnx("usage: path_controller {start|stop|status}");
+		warnx("usage: path_controller {full|attitude|stop|status}");
 		return 1;
 	}
 
 	// if command is start, then first control if class exists already, if not, allocate new one
-	if (!strcmp(argv[1], "start")) {
+	if (!strcmp(argv[1], "full") || !strcmp(argv[1], "attitude")) {
 
 		if (path_controller::g_control != nullptr) {
 			warnx("already running");
@@ -832,7 +891,7 @@ int path_controller_main(int argc, char *argv[])
 		}
 
 		// allocate new class HippocampusPathControl
-		path_controller::g_control = new HippocampusPathControl;
+		path_controller::g_control = new HippocampusPathControl(argv[1]);
 
 		// check if class has been allocated, if not, give back failure
 		if (path_controller::g_control == nullptr) {

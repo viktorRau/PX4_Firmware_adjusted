@@ -46,7 +46,7 @@
  * velocity of the vehicle in the dynamic model
  *
  */
-PARAM_DEFINE_FLOAT(ST_V, 0.5f);
+PARAM_DEFINE_FLOAT(ST_V, 0.3f);
 
 
 /**

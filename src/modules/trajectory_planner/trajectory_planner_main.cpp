@@ -238,6 +238,10 @@ HippocampusTrajectoryPlanner::HippocampusTrajectoryPlanner(char *type_traj) :
 
 	} else if (!strcmp(type_array, "circle")) {
 		PX4_INFO("Trajectory Planner started! Modus Circle!");
+	} else if (!strcmp(type_array, "spiral")) {
+		PX4_INFO("Trajectory Planner started! Modus Spiral!");
+	} else if (!strcmp(type_array, "random")) {
+		PX4_INFO("Trajectory Planner started! Modus Random!");
 	}
 
 	// allocate parameter handles

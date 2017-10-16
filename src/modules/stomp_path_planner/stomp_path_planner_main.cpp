@@ -165,6 +165,9 @@ private:
 	// Cost Function for STOMP algorithm
 	float       CostFunction(math::Vector<5> state, math::Vector<3> wp);
 
+	// Obstacle Function
+	float       ObstacleFunction(math::Vector<3> pos);
+
 	// STOMP Trajectory Planner
 	void        PSTOMP(math::Vector<5> state_ini);
 
@@ -400,9 +403,59 @@ float StompPathPlanner::CostFunction(math::Vector<5> state, math::Vector<3> wp)
 	float pos_error = pos_error_vec.length();
     pos_error = 0.0f;
 
-	// Calculate complete cost
-	return (ori_error + pos_error);
+    // Check if we are in an obstacle
+    float obs_error = ObstacleFunction(position);
 
+	// Calculate complete cost
+	return (ori_error + pos_error + obs_error);
+
+}
+
+// Obstacle Function
+float StompPathPlanner::ObstacleFunction(math::Vector<3> pos)
+{
+    /* In order to keeps things simple we restrict the obstacles to pillars with radius 0.5 and infinte length */
+    // radius pillars
+    float r_pillar = 0.5;
+    // safety area
+    float r_safety = 0.2;
+    // put both together
+    float r_total = r_pillar + r_safety;
+
+    // get number of pillars
+    math::Matrix<4, 3> p;
+
+    // number of pillars
+    int n_pillar = p.get_rows();
+
+    // Define centers of pillars
+    math::Vector<3> p1(2.0, 2.0, pos(2));
+    math::Vector<3> p2(0.0, 4.0, pos(2));
+    math::Vector<3> p3(2.0, 6.0, pos(2));
+    math::Vector<3> p4(6.0, 6.0, pos(2));
+    p.set_row(0, p1);
+    p.set_row(1, p2);
+    p.set_row(2, p3);
+    p.set_row(3, p4);
+
+    // Put vectors into matrix
+    bool hitObstacle = false;
+    for (int i=0; i<n_pillar; i++) {
+        p.set_row(i, (p.get_rowValues(i) - pos));
+        if (p.get_rowValues(i).length() < r_total) {
+            hitObstacle = true;
+        }
+    }
+
+    // check wether we are in an obstacle or not
+    float obs_error = 0;
+    if (hitObstacle) {
+        obs_error = 1000;
+    } else {
+        obs_error = 0;
+    }
+
+    return obs_error;
 }
 
 
@@ -520,7 +573,6 @@ void StompPathPlanner::PSTOMP(math::Vector<5> state_ini)
 	    trajectory.set_row((i+1), KinematicModel(trajectory.get_rowValues(i), u_ini.get_rowValues(i)));
 	    sum_prob_end = sum_prob_end + scale_cost * CostFunction(trajectory.get_rowValues(i+1), goal_position);
     }
-    PX4_INFO("End Cost:\t%f", (double)sum_prob_end);
 
     // Allocate data into class intern matrix gen_trajectory
     for (int jj=0; jj<5; jj++) {                                                // allocate trajectory data
@@ -542,6 +594,10 @@ void StompPathPlanner::pub_traj(int index)
 	_v_traj_sp.x = gen_trajectory(index, 0);        // x
 	_v_traj_sp.y = gen_trajectory(index, 1);        // y
 	_v_traj_sp.z = gen_trajectory(index, 2);        // z
+
+    /*_v_traj_sp.dx = 0.0f;    // dx/dt
+	_v_traj_sp.dy = 0.0f;                // dy/dt
+	_v_traj_sp.dz = 0.0f;   // dz/dt*/
 
 	_v_traj_sp.dx = cosf(psi) * cosf(phi) * _params.v_STOMP;    // dx/dt
 	_v_traj_sp.dy = sinf(phi) * _params.v_STOMP;                // dy/dt
@@ -586,8 +642,8 @@ void StompPathPlanner::task_main()
 	// load goal position
     //std::ifstream myfile("data.txt");
     //myfile >> goal_position(0) >> goal_position(1) >> goal_position(2);
-    goal_position(0) = 10.0f;
-    goal_position(1) = 15.0f;
+    goal_position(0) = 4.0f;
+    goal_position(1) = 10.0f;
     PX4_INFO("Goal Coordinates:\t%f\t%f\t%f", (double)goal_position(0), (double)goal_position(1), (double)goal_position(2));
 
     // Initial Vector for STOMP
@@ -664,9 +720,9 @@ void StompPathPlanner::task_main()
                 PSTOMP(state_ini);
                 time_counter = 0.0f;
                 t_zero = t_ges;
-                PX4_INFO("Start STOMP algorithm with Initial Position:");
-                PX4_INFO("\t%f\t%f\t%f\n%f\t%f\n",
-                        (double)state_ini(0), (double)state_ini(1), (double)state_ini(2), (double)state_ini(3), (double)state_ini(4));
+                //PX4_INFO("Start STOMP algorithm with Initial Position:");
+                //PX4_INFO("\t%f\t%f\t%f\n%f\t%f\n",
+                //        (double)state_ini(0), (double)state_ini(1), (double)state_ini(2), (double)state_ini(3), (double)state_ini(4));
             } else {
                 time_counter = time_counter + dt;
             }

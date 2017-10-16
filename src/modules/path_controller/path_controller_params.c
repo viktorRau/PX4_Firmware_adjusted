@@ -66,7 +66,7 @@ PARAM_DEFINE_FLOAT(PC_K_VZ, 1.0f);
  * Factor for the angular error.
  *
  */
-PARAM_DEFINE_FLOAT(PC_K_RX, 1.0f);
+PARAM_DEFINE_FLOAT(PC_K_RX, 0.0f);
 PARAM_DEFINE_FLOAT(PC_K_RY, 1.0f);
 PARAM_DEFINE_FLOAT(PC_K_RZ, 1.0f);
 
@@ -127,4 +127,22 @@ PARAM_DEFINE_FLOAT(PC_L, 0.0481f);
  *
  */
 PARAM_DEFINE_FLOAT(PC_OG, 1.0f);
+
+/**
+ * Desired Angle Roll
+ *
+ */
+PARAM_DEFINE_FLOAT(PC_ROLL, 0.0f);
+
+/**
+ * Desired Angle Pitch
+ *
+ */
+PARAM_DEFINE_FLOAT(PC_PITCH, 1.5f);
+
+/**
+ * Desired Angle Yaw
+ *
+ */
+PARAM_DEFINE_FLOAT(PC_YAW, 0.0f);
 
