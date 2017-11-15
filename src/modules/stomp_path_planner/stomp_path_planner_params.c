@@ -46,7 +46,7 @@
  * velocity of the vehicle in the dynamic model
  *
  */
-PARAM_DEFINE_FLOAT(ST_V, 0.3f);
+PARAM_DEFINE_FLOAT(ST_V, 0.25f);
 
 
 /**
@@ -55,7 +55,7 @@ PARAM_DEFINE_FLOAT(ST_V, 0.3f);
  * Timestep between two states
  *
  */
-PARAM_DEFINE_FLOAT(ST_D_T, 0.02f);
+PARAM_DEFINE_FLOAT(ST_DT, 0.3f);
 
 /**
  * r

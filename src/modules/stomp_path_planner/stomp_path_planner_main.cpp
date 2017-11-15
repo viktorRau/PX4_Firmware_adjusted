@@ -131,6 +131,8 @@ private:
 	float               time_limit;
 	float               t_zero;
 
+	float               counter;
+
 	// goal position
 	math::Vector<3> goal_position;
 
@@ -138,12 +140,18 @@ private:
 	bool prc_new;
 
 	// Number of Estimation Steps and of Iterations
-	constexpr static int N_STOMP = 30;
-	constexpr static int K_STOMP = 50;
-	constexpr static int iter_STOMP = 50;
+	constexpr static int N_STOMP = 100;
+	constexpr static int L_STOMP = 40;
+	constexpr static int K_STOMP = 100;
+	constexpr static int iter_STOMP = 1000;
+	constexpr static int max_Steps = 10;
 
-    // Allocate Space for generated Trajectory
-    math::Matrix<N_STOMP+1, 6> gen_trajectory;         // the sixth entry holds the timestamps
+	int N_total;
+
+	float Delta_T;
+
+    // Allocate Space for generated Trajectory and Cost
+    math::Matrix<L_STOMP*max_Steps+1, 5> trajectory;
 
 	// STOMP, declare random generator
 	std::default_random_engine generator;
@@ -163,7 +171,7 @@ private:
 	math::Vector<5>     KinematicModel(math::Vector<5> pose_0, math::Vector<2> u);
 
 	// Cost Function for STOMP algorithm
-	float       CostFunction(math::Vector<5> state, math::Vector<3> wp);
+	float       CostFunction(math::Vector<5> state, math::Vector<5> state_prev, math::Vector<3> wp, math::Vector<2> u);
 
 	// Obstacle Function
 	float       ObstacleFunction(math::Vector<3> pos);
@@ -172,7 +180,10 @@ private:
 	void        PSTOMP(math::Vector<5> state_ini);
 
 	// Update Trajectory Setpoint Topic
-	void        pub_traj(int index);
+	void        pub_traj(float time);
+
+    // Get Flow Velocity
+	math::Vector<3> flowField(math::Vector<3> pos);
 
 	// Update our local parameter cache.
 	int			parameters_update();                // checks if parameters have changed and updates them
@@ -221,6 +232,8 @@ StompPathPlanner::StompPathPlanner() :
 	memset(&_v_att, 0, sizeof(_v_att));
     memset(&_v_pos, 0, sizeof(_v_pos));
 
+    Delta_T = 0.2f;
+
 	// initialize STOMP parameter
 	_params.delta_T_STOMP = 0.0f;
 	_params.v_STOMP = 0.0f;
@@ -231,15 +244,16 @@ StompPathPlanner::StompPathPlanner() :
 	time_limit = 0.0f;
 	t_zero = 0.0f;
 
-	// STOMP
-	prc_new = true;
+	counter = 0.0f;
+
+	N_total = L_STOMP*max_Steps;
 
 	// initialize to zero
-	gen_trajectory.zero();
+	trajectory.zero();
 	goal_position.zero();
 
 	// allocate parameter handles
-	_params_handles.delta_T_STOMP	= 	param_find("ST_D_T");
+	_params_handles.delta_T_STOMP	= 	param_find("ST_DT");
 	_params_handles.v_STOMP		    = 	param_find("ST_V");
 
 	// fetch initial parameter values
@@ -299,20 +313,34 @@ void StompPathPlanner::parameter_update_poll()
 	}
 }
 
+math::Vector<3> StompPathPlanner::flowField(math::Vector<3> pos)
+{
+  // Get Current Velocity, only irrotational velocities considered
+  math::Vector<3> flowVel(0.0f, 0.0f, 0.0f);            // Initialize Flow Velocity
+  if (pos(1) > 2.0f && pos(1) < 6.0f) {                 // Check if Field is in current
+    flowVel(0) = 0.0f;
+  }
+  return flowVel;
+}
+
 // Kinematic Model for PSTOMP algorithm
 math::Vector<5> StompPathPlanner::KinematicModel(math::Vector<5> state_0, math::Vector<2> u)
 {
 	math::Vector<5> state_1;
 
-	float delta_T_STOMP = _params.delta_T_STOMP;
+	math::Vector<3> position(state_0(0), state_0(1), state_0(2));
+
+	math::Vector<3> flow = flowField(position);
+
+	float delta_T_STOMP = Delta_T;
 	float v_STOMP = _params.v_STOMP;
 
 	if (fabs(u(0)) < 0.001 && fabs(u(1)) < 0.001) {
 	    state_1(3) = state_0(3);                        // update phi
 	    state_1(4) = state_0(4);                        // update psi
-		state_1(0) = state_0(0) + cosf(state_0(4))*cosf(state_0(3))*delta_T_STOMP*v_STOMP;
-		state_1(1) = state_0(1) + sinf(state_0(3))*delta_T_STOMP*v_STOMP;
-		state_1(2) = state_0(2) - sinf(state_0(4))*cosf(state_0(3))*delta_T_STOMP*v_STOMP;
+		state_1(0) = state_0(0) + cosf(state_0(4))*cosf(state_0(3))*delta_T_STOMP*v_STOMP + flow(0)*delta_T_STOMP;
+		state_1(1) = state_0(1) + sinf(state_0(3))*delta_T_STOMP*v_STOMP + flow(1)*delta_T_STOMP;
+		state_1(2) = state_0(2) - sinf(state_0(4))*cosf(state_0(3))*delta_T_STOMP*v_STOMP + flow(2)*delta_T_STOMP;
 	} else if (fabs(u(0) - u(1)) < 0.001) {
         float uu = u(0);
         float C = state_0(4) - state_0(3);
@@ -322,14 +350,14 @@ math::Vector<5> StompPathPlanner::KinematicModel(math::Vector<5> state_0, math::
 
         // update x coordinate
         state_1(0) = state_0(0) + (v_STOMP / 2) * (cosf(C)*delta_T_STOMP + (cosf(C)/(2*uu))*(sinf(2*state_1(3)) - sinf(2*state_0(3)))
-                                            + (sinf(C)/(2*uu)) * (cosf(2*state_1(3)) - cosf(2*state_0(3))));
+                                            + (sinf(C)/(2*uu)) * (cosf(2*state_1(3)) - cosf(2*state_0(3)))) + flow(0)*delta_T_STOMP;
 
         // update y coordinate
-		state_1(1) = state_0(1) + (v_STOMP/uu) * (cosf(state_0(3)) - cosf(state_1(3)));
+		state_1(1) = state_0(1) + (v_STOMP/uu) * (cosf(state_0(3)) - cosf(state_1(3))) + flow(1)*delta_T_STOMP;
 
 		// update z coordinate
 		state_1(2) = state_0(2) - (v_STOMP / 2) * (sinf(C)*delta_T_STOMP + (cosf(C)/(2*uu))*(cosf(2*state_0(3)) - cosf(2*state_1(3)))
-                                            + (sinf(C)/(2*uu)) * (sinf(2*state_1(3)) - sinf(2*state_0(3))));
+                                            + (sinf(C)/(2*uu)) * (sinf(2*state_1(3)) - sinf(2*state_0(3)))) + flow(2)*delta_T_STOMP;
 	} else if (fabs(u(0) + u(1)) < 0.001) {
 	    float uu = u(0);
         float C = state_0(4) + state_0(3);
@@ -339,14 +367,14 @@ math::Vector<5> StompPathPlanner::KinematicModel(math::Vector<5> state_0, math::
 
         // update x coordinate
         state_1(0) = state_0(0) + (v_STOMP / 2) * (cosf(C)*delta_T_STOMP + (cosf(C)/(2*uu))*(sinf(2*state_1(3)) - sinf(2*state_0(3)))
-                                            + (sinf(C)/(2*uu)) * (cosf(2*state_0(3)) - cosf(2*state_1(3))));
+                                            + (sinf(C)/(2*uu)) * (cosf(2*state_0(3)) - cosf(2*state_1(3)))) + flow(0)*delta_T_STOMP;
 
         // update y coordinate
-		state_1(1) = state_0(1) + (v_STOMP/uu) * (cosf(state_0(3)) - cosf(state_1(3)));
+		state_1(1) = state_0(1) + (v_STOMP/uu) * (cosf(state_0(3)) - cosf(state_1(3))) + flow(1)*delta_T_STOMP;
 
 		// update z coordinate
 		state_1(2) = state_0(2) - (v_STOMP / 2) * (sinf(C)*delta_T_STOMP + (cosf(C)/(2*uu))*(cosf(2*state_1(3)) - cosf(2*state_0(3)))
-                                            + (sinf(C)/(2*uu)) * (sinf(2*state_1(3)) - sinf(2*state_0(3))));
+                                            + (sinf(C)/(2*uu)) * (sinf(2*state_1(3)) - sinf(2*state_0(3)))) + flow(2)*delta_T_STOMP;
 	}
 	else {
 	    state_1(3) = state_0(3) + u(0) * delta_T_STOMP;		    // update phi
@@ -361,17 +389,17 @@ math::Vector<5> StompPathPlanner::KinematicModel(math::Vector<5> state_0, math::
 		float sin_min_0 = sinf(state_0(3) - state_0(4));
 		float sin_plus_1 = sinf(state_1(3) + state_1(4));
 		float sin_plus_0 = sinf(state_0(3) + state_0(4));
-		state_1(0) = state_0(0) + (v_STOMP / 2) * ((sin_min_1 - sin_min_0)/u_12 + (sin_plus_1-sin_plus_0)/uu);
+		state_1(0) = state_0(0) + (v_STOMP / 2) * ((sin_min_1 - sin_min_0)/u_12 + (sin_plus_1-sin_plus_0)/uu) + flow(0)*delta_T_STOMP;
 
 		// update y coordinate
-		state_1(1) = state_0(1) + (v_STOMP/u(0)) * (cosf(state_0(3)) - cosf(state_1(3)));
+		state_1(1) = state_0(1) + (v_STOMP/u(0)) * (cosf(state_0(3)) - cosf(state_1(3))) + flow(1)*delta_T_STOMP;
 
 		// update z coordinate
 		float cos_min_1 = cosf(state_1(4) - state_1(3));
 		float cos_min_0 = cosf(state_0(4) - state_0(3));
 		float cos_plus_1 = cosf(state_1(3) + state_1(4));
 		float cos_plus_0 = cosf(state_0(3) + state_0(4));
-		state_1(2) = state_0(2) + (v_STOMP / 2) * ((cos_min_1 - cos_min_0)/u_21 + (cos_plus_1-cos_plus_0)/uu);
+		state_1(2) = state_0(2) + (v_STOMP / 2) * ((cos_min_1 - cos_min_0)/u_21 + (cos_plus_1-cos_plus_0)/uu) + flow(2)*delta_T_STOMP;
 	}
 
 	return state_1;
@@ -379,36 +407,32 @@ math::Vector<5> StompPathPlanner::KinematicModel(math::Vector<5> state_0, math::
 }
 
 // Cost Function for the STOMP algorithm
-float StompPathPlanner::CostFunction(math::Vector<5> state, math::Vector<3> wp)
+float StompPathPlanner::CostFunction(math::Vector<5> state, math::Vector<5> state_prev, math::Vector<3> wp, math::Vector<2> u)
 {
-	// Calculate orientation error
-    math::Vector<3> position(state(0), state(1), state(2));     // get actual position
-	math::Vector<3> direct = wp - position;                     // get actual direction vector and normalize
-    direct.normalize();
-    float psi_des = atan2f(-direct(2), direct(0));              // calculate desired angles
-    float phi_des = 0;
-    if (fabs(cosf(psi_des)) < 0.0001) {
-        phi_des = atan2f(direct(1), 0.0f);
-    }
-    else {
-        phi_des = atan2f(direct(1), direct(0)/cosf(psi_des));
-    }
+    // Velocity Error, thus check if direction of movement is correct
+    math::Vector<3> position(state(0), state(1), state(2));
+    math::Vector<3> position_prev(state_prev(0), state_prev(1), state_prev(2));
 
-    float phi_s3 = phi_des - state(3);
-    float psi_s4 = psi_des - state(4);
-    float ori_error = sqrt(phi_s3*phi_s3 + psi_s4*psi_s4);        // Orientation Error
+    math::Vector<3> position_diff = position - wp;
+    math::Vector<3> position_prev_diff = position_prev - wp;
 
-	// Calculate position error
-	math::Vector<3> pos_error_vec = position - wp;
-	float pos_error = pos_error_vec.length();
-    pos_error = 0.0f;
+    float l_act = position_diff.length();
+    float l_prev = position_prev_diff.length();
 
-    // Check if we are in an obstacle
+    float vel_error = (l_act - l_prev)/Delta_T;
+    vel_error = vel_error/Delta_T;
+
+    // Control Costs
+    //float u_error = fabs(u(0)) + fabs(u(1));
+
+    // Obstacle Costs
     float obs_error = ObstacleFunction(position);
 
-	// Calculate complete cost
-	return (ori_error + pos_error + obs_error);
+    // Calculate Complete Error
+    float complete_error = vel_error + obs_error;
 
+	// Calculate complete cost
+	return complete_error;
 }
 
 // Obstacle Function
@@ -418,186 +442,213 @@ float StompPathPlanner::ObstacleFunction(math::Vector<3> pos)
     // radius pillars
     float r_pillar = 0.5;
     // safety area
-    float r_safety = 0.2;
+    float r_safety = 0.3;
     // put both together
     float r_total = r_pillar + r_safety;
 
     // get number of pillars
-    math::Matrix<4, 3> p;
+    math::Matrix<8, 3> p;
 
     // number of pillars
     int n_pillar = p.get_rows();
 
     // Define centers of pillars
-    math::Vector<3> p1(2.0, 2.0, pos(2));
-    math::Vector<3> p2(0.0, 4.0, pos(2));
-    math::Vector<3> p3(2.0, 6.0, pos(2));
-    math::Vector<3> p4(6.0, 6.0, pos(2));
+    math::Vector<3> p1(3.0, 0.0, pos(2));
+    math::Vector<3> p2(3.0, 3.0, pos(2));
+    math::Vector<3> p3(3.0, 6.0, pos(2));
+    math::Vector<3> p4(6.0, 0.0, pos(2));
+    math::Vector<3> p5(6.0, 3.0, pos(2));
+    math::Vector<3> p6(6.0, 3.0, pos(2));
+    math::Vector<3> p7(3.0, -3.0, pos(2));
+    math::Vector<3> p8(6.0, -3.0, pos(2));
     p.set_row(0, p1);
     p.set_row(1, p2);
     p.set_row(2, p3);
     p.set_row(3, p4);
+    p.set_row(4, p5);
+    p.set_row(5, p6);
+    p.set_row(6, p7);
+    p.set_row(7, p8);
 
     // Put vectors into matrix
-    bool hitObstacle = false;
+    math::Vector<3> diff;
     for (int i=0; i<n_pillar; i++) {
-        p.set_row(i, (p.get_rowValues(i) - pos));
-        if (p.get_rowValues(i).length() < r_total) {
-            hitObstacle = true;
+        diff.zero();
+        diff = p.get_rowValues(i) - pos;
+        if (diff.length() < r_total) {
+            return 10000.0f;
         }
     }
 
-    // check wether we are in an obstacle or not
-    float obs_error = 0;
-    if (hitObstacle) {
-        obs_error = 1000;
-    } else {
-        obs_error = 0;
-    }
+    return 0.0f;
 
-    return obs_error;
 }
 
 
 // Calculate Trajectory, PSTOMP algorithm
 void StompPathPlanner::PSTOMP(math::Vector<5> state_ini)
 {
-    // Scaling Factors
-    float scale_cost = 0.1f;
-    float scale_var = 0.01f;
+    // Parameters
+    float scale_cost = 0.5f;
+    float scale_var = 0.2f;
+    float r = 0.3;
+    float conv = 0.000000001;
+    float b_goal = 100;
 
-	/*// get actual orientation
-    math::Quaternion q_att(_ctrl_state.q[0], _ctrl_state.q[1], _ctrl_state.q[2], _ctrl_state.q[3]);
-	math::Vector<3> orientation = q_att.to_euler();
-
-	// get initial state only pitch and yaw are relevant
-	math::Vector<5> state_ini;
-	state_ini(0) = _ctrl_state.x_pos;
-	state_ini(1) = _ctrl_state.y_pos;
-	state_ini(2) = _ctrl_state.z_pos;
-	state_ini(3) = orientation(1);
-	state_ini(4) = orientation(2);*/
-
-	/*// Generating Inversed Squared Backward finite difference Matrix
-	math::Matrix<N_STOMP, N_STOMP> Sigma;			// Generating Backward Finite Difference Matrix
+	math::Matrix<N_STOMP, N_STOMP> Sigma;
 	Sigma.identity();
-	for( int i = 1; i < N_STOMP; i = i + 1 ) {
-      		Sigma(i, (i-1)) = -2;
-   	}
-	for( int i = 2; i < N_STOMP; i = i + 1 ) {
-      		Sigma(i, (i-2)) = 1;
-   	}	
-	Sigma = Sigma.transposed() * Sigma;	    // Squaring Matrices
-	Sigma = Sigma.inversed();				// Inverse Matrix
-	Sigma = Sigma * scale_var;              // Scale Variance
 
-	// Cholesky Decomposition of Sigma to bottom down Matrix
-	float summe = 0;
-	for (int i=0; i < N_STOMP; i++) {
-    		for (int l=0; l < i; l++) {
-      			summe = Sigma(i,l);
-      			for (int k=0; k < (l-1); k++) {
-        			summe = summe - Sigma(i,k) * Sigma(l,k);
-        			if (i > l) { 
-          				Sigma(i,l) = summe / Sigma(l,l);
-				}   
-        			else if (summe > 0) {                             
-          				Sigma(i,i) = sqrt(summe);
-				}
-				else {
-					warnx("Cholesky Decomposition: Matrix has to be symetric!");
-				}
-			}
-		}
-	}
-  	for (int i=0; i < (N_STOMP-1); i++) {
-    		for (int l=(i+1); l < N_STOMP; l++) {
-      			Sigma(i,l) = 0;
-		}
-	}*/
-
-    math::Matrix<N_STOMP, N_STOMP> Sigma;
-	for (int i=0; i<N_STOMP; i++) {
-	    for(int l=0; l<(i+1); l++) {
-	        Sigma(i,l) = 1+i-l;
-	    }
-	}
-
-	// Start the algorithm
-
-	// initialize holders
-	math::Matrix<N_STOMP, 2> u_ini;			    // initial input at the beginning of each iteration
-	u_ini.zero();
-	math::Matrix<N_STOMP, 2> u_delta;		    // Change for the inputs
+	// Holders
+	math::Matrix<N_STOMP, 2> eps;
+	eps.zero();
+    math::Matrix<N_STOMP, 2> u_hat;
+    u_hat.zero();
+    math::Matrix<N_STOMP, 2> u;
+	u.zero();
+	math::Matrix<N_STOMP, 2> u_delta;
 	u_delta.zero();
-	math::Matrix<N_STOMP+1, 5> trajectory;		// Matrix to store current trajectory, sixth entry are timestamps
-	trajectory.zero();
-	trajectory.set_row(0, state_ini);		    // Set inital state
-	math::Vector<K_STOMP> costs;                // Costs for the K different trajectories
-	costs.zero();
-	float sum_prob = 0;                         // Sum of all Probabilities from the K trajectories
-	
-	// Iterate through K sampled Trajectories a certain number of iterations
-	for (int ll=0; ll < iter_STOMP; ll++) {
-	    for (int k=0; k < K_STOMP; k++) {
-		    // Generate Random Input Samples
-		    math::Matrix<N_STOMP, 2> rand_vec;	// Generate samples from a one dimensional Normal Distribution
-		    for (int i=0; i < N_STOMP; i++) {
-    		    rand_vec(i, 0) = distribution(generator);
-			    rand_vec(i, 1) = distribution(generator);
-		    }
-		    rand_vec = Sigma*rand_vec*scale_var;		// Generate Mutlivariate Normal Distribution based on the inversed squared backward finite difference matrix
 
-		    math::Matrix<N_STOMP, 2> u_eps;     // Adding Samples to initial inputs
-		    u_eps.zero();
-		    u_eps = u_ini + rand_vec;
 
-		    // Calculate trajectory and their cost
-		    for (int i=0; i < N_STOMP; i++) {
-			    trajectory.set_row((i+1), KinematicModel(trajectory.get_rowValues(i), u_eps.get_rowValues(i)));   // Get next Point for Trajectory
-			    costs(k) = costs(k) + CostFunction(trajectory.get_rowValues(i+1), goal_position);  // Add cost for this point
-		    }
+	math::Matrix<N_STOMP+1, 5> x_hat;
+	x_hat.zero();
+	math::Matrix<N_STOMP+1, 5> x_final;
+	x_final.zero();
 
-	        // Sum up all input over the K trajectories scaled with their probabilities
-	        float tmp_prob = expf(-scale_cost*costs(k));
-	        u_delta = u_delta + u_eps * tmp_prob;
-	        sum_prob = sum_prob + tmp_prob;
+	math::Vector<K_STOMP> S;
+	S.zero();
+
+	float p_sum = 0.0f;
+	float p_sum_final = 0.0f;
+	float p_sum_final_prev = 1000.0f;
+	float S_diff = 1000.0f;
+
+	int ii = 0;
+
+    // Start the algorithm
+    while (ii < max_Steps) {
+        // Allocate N
+        int N = N_STOMP;
+
+        // Allocate Initial States
+        u.zero();
+        x_hat.set_row(0, state_ini);
+        x_final.set_row(0, state_ini);
+        S_diff = 100.0f;
+
+        int jj = 0;
+
+        while (S_diff > conv && jj < iter_STOMP) {
+
+            //Allocate zeros
+            p_sum_final = 0.0f;
+            S.zero();
+            u_delta.zero();
+            p_sum = 0.0f;
+            p_sum_final = 0.0f;
+
+            // Generate K sample trajectories
+	        for (int k=0; k < K_STOMP; k++) {
+
+		        // Generate Random Input Samples, Normal Distribution
+		        for (int i=0; i < N; i++) {
+    		        eps(i, 0) = distribution(generator);
+			        eps(i, 1) = distribution(generator);
+		        }
+
+		        // Generate Mutlivariate Normal Distribution
+		        eps = Sigma*eps*scale_var;
+                // Add random samples to initial input signals
+		        u_hat = u + eps;
+
+		        // Calculate trajectory and their cost
+		        for (int i=0; i < N; i++) {
+			        x_hat.set_row((i+1), KinematicModel(x_hat.get_rowValues(i), u_hat.get_rowValues(i)));
+			        S(k) = S(k) + CostFunction(x_hat.get_rowValues(i+1), x_hat.get_rowValues(i), goal_position,
+			                                    u_hat.get_rowValues(i));
+		        }
+
+		        // Check if goal state is already reached
+		        for (int i=0; i < N; i++) {
+		            math::Vector<3> x_diff_vec_tmp(x_hat(i+1,0), x_hat(i+1,1), x_hat(i+1,2));
+		            x_diff_vec_tmp = x_diff_vec_tmp - goal_position;
+		            if (x_diff_vec_tmp.length() < r) {
+		                N = i+1;
+		                S(k) = S(k) - b_goal;
+		                break;
+		            }
+		        }
+		        // Divide costs through N_STOMP
+		        S = S / N_STOMP;
+
+	            // Sum up all input over the K trajectories scaled with their probabilities
+	            float p_tmp = expf(-scale_cost * S(k));
+	            u_delta = u_delta + eps * p_tmp;
+	            p_sum = p_sum + p_tmp;
+	        }
+	        // Generate new input signals
+	        if (p_sum > 0.00001f) {
+	            u = u + u_delta / p_sum;
+	        }
+
+            // Calculate Generated Trajectory
+            for (int i=0; i < N; i++) {
+	            x_final.set_row((i+1), KinematicModel(x_final.get_rowValues(i), u.get_rowValues(i)));
+	            p_sum_final = p_sum_final + scale_cost * CostFunction(x_final.get_rowValues(i+1), x_final.get_rowValues(i), goal_position, u.get_rowValues(i));
+            }
+
+            // Calculate Cost Difference
+            S_diff = fabs(p_sum_final - p_sum_final_prev);
+            p_sum_final_prev = p_sum_final;
+
+            jj = jj + 1;
+
+        }
+
+        // Store Trajectory Data into Matrix
+	    for (int i=0; i < L_STOMP; i++) {
+	        trajectory.set_row(((i+1)+(ii*L_STOMP)), x_final.get_rowValues(i+1));
 	    }
-	    // Generate new input signals
-	    u_ini = u_ini + u_delta / sum_prob;
+
+        // Check if goal state is already reached
+		for (int i=0; i < L_STOMP; i++) {
+		    math::Vector<3> x_diff_vec_tmp(x_final(i+1,0), x_final(i+1,1), x_final(i+1,2));
+		    x_diff_vec_tmp = x_diff_vec_tmp - goal_position;
+		    if (x_diff_vec_tmp.length() < r) {
+		        N_total = ii*L_STOMP + i;
+		        ii = max_Steps;
+		        PX4_INFO("Found Feasible Trajectory!");
+		        break;
+		    }
+	    }
+
+	    // Allocate new initial state
+	    state_ini = x_final.get_rowValues(L_STOMP);
+
+	    ii = ii + 1;
 	}
-
-    // Calculate Final Trajectory
-    float sum_prob_end = 0;
-    for (int i=0; i < N_STOMP; i++) {
-	    trajectory.set_row((i+1), KinematicModel(trajectory.get_rowValues(i), u_ini.get_rowValues(i)));
-	    sum_prob_end = sum_prob_end + scale_cost * CostFunction(trajectory.get_rowValues(i+1), goal_position);
-    }
-
-    // Allocate data into class intern matrix gen_trajectory
-    for (int jj=0; jj<5; jj++) {                                                // allocate trajectory data
-        gen_trajectory.set_col(jj, trajectory.get_colValues(jj));
-    }
-    for (int jj=0; jj<(N_STOMP+1); jj++) {                                      // allocate Timestamps
-        gen_trajectory(jj, 5) = jj * _params.delta_T_STOMP;
-    }
 }
 
 // Publish data to trajectory_setpoint for controller
-void StompPathPlanner::pub_traj(int index)
+void StompPathPlanner::pub_traj(float time)
 {
+    // Calculate Index from time+
+    int index = round(time/Delta_T);
+    if (index > N_total) {
+        index = N_total;
+    }
+
     // Angles
-    float phi = gen_trajectory(index, 3);
-    float psi = gen_trajectory(index, 4);
+    float phi = trajectory(index, 3);
+    float psi = trajectory(index, 4);
 
     // allocate values
-	_v_traj_sp.x = gen_trajectory(index, 0);        // x
-	_v_traj_sp.y = gen_trajectory(index, 1);        // y
-	_v_traj_sp.z = gen_trajectory(index, 2);        // z
+	_v_traj_sp.x = trajectory(index, 0);        // x
+	_v_traj_sp.y = trajectory(index, 1);        // y
+	_v_traj_sp.z = trajectory(index, 2);        // z
 
-    /*_v_traj_sp.dx = 0.0f;    // dx/dt
-	_v_traj_sp.dy = 0.0f;                // dy/dt
-	_v_traj_sp.dz = 0.0f;   // dz/dt*/
+    /*_v_traj_sp.dx = 0.0f;         // dx/dt
+	_v_traj_sp.dy = 0.0f;           // dy/dt
+	_v_traj_sp.dz = 0.0f;           // dz/dt*/
 
 	_v_traj_sp.dx = cosf(psi) * cosf(phi) * _params.v_STOMP;    // dx/dt
 	_v_traj_sp.dy = sinf(phi) * _params.v_STOMP;                // dy/dt
@@ -614,8 +665,44 @@ void StompPathPlanner::pub_traj(int index)
 	_v_traj_sp.roll = 0.0f;                  // no roll angle
 	_v_traj_sp.droll = 0.0f;
 
+	_v_traj_sp.phi = phi;
+	_v_traj_sp.psi = psi;
+
+	_v_traj_sp.start = 1;
+
 	// publish setpoint data
 	orb_publish(ORB_ID(trajectory_setpoint), _v_traj_sp_pub, &_v_traj_sp);
+
+	// Debugging
+	if (counter < t_ges) {
+
+		counter = counter + 3.0f;            // every 0.5 seconds
+
+		/*PX4_INFO("e_p:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)e_p(0),
+			 (double)e_p(1),
+			 (double)e_p(2));
+		PX4_INFO("e_v:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)e_v(0),
+			 (double)e_v(1),
+			 (double)e_v(2));
+		PX4_INFO("e_r:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)e_r(0),
+			 (double)e_r(1),
+			 (double)e_r(2));
+		PX4_INFO("e_w:\t%8.2f\t%8.2f\t%8.2f\n",
+			 (double)e_w(0),
+			 (double)e_w(1),
+			 (double)e_w(2));*/
+		/*PX4_INFO("r:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)r(0),
+			 (double)r(1),
+			 (double)r(2));*/
+		PX4_INFO("ST:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)trajectory(index, 0),
+			 (double)trajectory(index, 1),
+			 (double)trajectory(index, 2));
+	}
 }
 
 // Just starts the task_main function
@@ -642,13 +729,29 @@ void StompPathPlanner::task_main()
 	// load goal position
     //std::ifstream myfile("data.txt");
     //myfile >> goal_position(0) >> goal_position(1) >> goal_position(2);
-    goal_position(0) = 4.0f;
-    goal_position(1) = 10.0f;
+    goal_position(0) = 8.0f;
+    goal_position(1) = 8.0f;
     PX4_INFO("Goal Coordinates:\t%f\t%f\t%f", (double)goal_position(0), (double)goal_position(1), (double)goal_position(2));
 
-    // Initial Vector for STOMP
+    // copy control state
+	orb_copy(ORB_ID(vehicle_attitude), _v_att_sub, &_v_att);
+	orb_copy(ORB_ID(vehicle_local_position), _v_pos_sub, &_v_pos);
+
+	// Get Orientation
+	math::Quaternion q_att(_v_att.q[0], _v_att.q[1], _v_att.q[2], _v_att.q[3]);
+	math::Vector<3> orientation = q_att.to_euler();
+
+	// Initial Vector for STOMP
     math::Vector<5> state_ini;
 	state_ini.zero();
+    state_ini(0) = _v_pos.x;
+    state_ini(1) = _v_pos.y;
+	state_ini(2) = _v_pos.z;
+    state_ini(3) = orientation(1);
+	state_ini(4) = orientation(2);
+
+	// Plan Trajectory
+	PSTOMP(state_ini);
 
 	// wakeup source: vehicle pose
 	px4_pollfd_struct_t fds[1];
@@ -691,55 +794,18 @@ void StompPathPlanner::task_main()
 				dt = 0.02f;
 			}
 
-			// copy control state
-			orb_copy(ORB_ID(vehicle_attitude), _v_att_sub, &_v_att);
-			orb_copy(ORB_ID(vehicle_local_position), _v_pos_sub, &_v_pos);
+            // publish data
+            pub_traj(t_ges);
 
 			// count time
 			t_ges = t_ges + dt;
 
-			// If process has to be started new, then get actual position
-			if (prc_new) {
-			    // get actual orientation
-                math::Quaternion q_att(_v_att.q[0], _v_att.q[1], _v_att.q[2], _v_att.q[3]);
-	            math::Vector<3> orientation = q_att.to_euler();
-
-	            // get initial state only pitch and yaw are relevant
-	            state_ini(0) = _v_pos.x;
-	            state_ini(1) = _v_pos.y;
-	            state_ini(2) = _v_pos.z;
-	            state_ini(3) = orientation(1);
-	            state_ini(4) = orientation(2);
-
-	            prc_new = false;
-			}
-
-			// do trajectory planning
-			time_limit = N_STOMP * _params.delta_T_STOMP * 0.3f;
-            if (time_counter > time_limit) {
-                PSTOMP(state_ini);
-                time_counter = 0.0f;
-                t_zero = t_ges;
-                //PX4_INFO("Start STOMP algorithm with Initial Position:");
-                //PX4_INFO("\t%f\t%f\t%f\n%f\t%f\n",
-                //        (double)state_ini(0), (double)state_ini(1), (double)state_ini(2), (double)state_ini(3), (double)state_ini(4));
-            } else {
-                time_counter = time_counter + dt;
-            }
-
-            // publish setpoint data for control algorithm
-            int index = (int)round((t_ges - t_zero)/_params.delta_T_STOMP) + 1;     // get correct index
-            pub_traj(index);
-            state_ini(0) = gen_trajectory(index, 0);
-	        state_ini(1) = gen_trajectory(index, 1);
-	        state_ini(2) = gen_trajectory(index, 2);
-	        state_ini(3) = gen_trajectory(index, 3);
-	        state_ini(4) = gen_trajectory(index, 4);
-	        //PX4_INFO("\t%f\t%f\t%f\n",
-            //            (double)gen_trajectory(index, 0), (double)gen_trajectory(index, 1), (double)gen_trajectory(index, 2));
-
 			// check for parameter updates
 			parameter_update_poll();
+
+			//sleep a bit
+			usleep(2000);
+
 		}
 
 		perf_end(_loop_perf);

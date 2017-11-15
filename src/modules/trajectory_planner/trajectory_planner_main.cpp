@@ -452,6 +452,9 @@ void HippocampusTrajectoryPlanner::random()
     float phi = act_state(3);
     float psi = act_state(4);
 
+    float u1 = rand_u(rand_counter,0);
+    float u2 = rand_u(rand_counter,1);
+
     // calculate position and their derivations
 	_v_traj_sp.x = act_state(0);    // x
 	_v_traj_sp.y = act_state(1);    // y
@@ -461,9 +464,9 @@ void HippocampusTrajectoryPlanner::random()
 	_v_traj_sp.dy = sinf(phi) * rand_v;                // dy/dt
 	_v_traj_sp.dz = -sinf(psi) * cosf(phi) * rand_v;   // dz/dt
 
-	_v_traj_sp.ddx = 0.0f;
-	_v_traj_sp.ddy = 0.0f;
-	_v_traj_sp.ddz = 0.0f;
+	_v_traj_sp.ddx = -(sinf(psi)*cosf(phi)*u2 + cosf(psi)*sinf(phi)*u1)*rand_v;
+	_v_traj_sp.ddy = cosf(phi)*u1*rand_v;
+	_v_traj_sp.ddz = (sinf(psi)*sinf(phi)*u1 - cosf(psi)*cosf(psi)*u2)*rand_v;
 
 	_v_traj_sp.dddx = 0.0f;
 	_v_traj_sp.dddy = 0.0f;

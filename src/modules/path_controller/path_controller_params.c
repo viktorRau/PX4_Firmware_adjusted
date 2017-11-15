@@ -66,7 +66,7 @@ PARAM_DEFINE_FLOAT(PC_K_VZ, 1.0f);
  * Factor for the angular error.
  *
  */
-PARAM_DEFINE_FLOAT(PC_K_RX, 0.0f);
+PARAM_DEFINE_FLOAT(PC_K_RX, 1.0f);
 PARAM_DEFINE_FLOAT(PC_K_RY, 1.0f);
 PARAM_DEFINE_FLOAT(PC_K_RZ, 1.0f);
 
@@ -81,10 +81,28 @@ PARAM_DEFINE_FLOAT(PC_K_WY, 1.0f);
 PARAM_DEFINE_FLOAT(PC_K_WZ, 1.0f);
 
 /**
- * Mass + added Mass of the Hippocampus
+ * Mass of the Hippocampus
  *
  */
-PARAM_DEFINE_FLOAT(PC_m, 3.0f);
+PARAM_DEFINE_FLOAT(PC_m, 1.47f);
+
+/**
+ * Added mass X-direction
+ *
+ */
+PARAM_DEFINE_FLOAT(PC_X_du, 1.11f);
+
+/**
+ * Added mass Y-direction
+ *
+ */
+PARAM_DEFINE_FLOAT(PC_Y_du, 2.8f);
+
+/**
+ * Added mass Z-direction
+ *
+ */
+PARAM_DEFINE_FLOAT(PC_Z_dw, 2.8f);
 
 /**
  * Damping X-direction

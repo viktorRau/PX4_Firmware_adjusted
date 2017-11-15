@@ -156,6 +156,9 @@ private:
 		param_t K_WY;
 		param_t K_WZ;
 		param_t m;
+		param_t X_du;
+		param_t Y_dv;
+		param_t Z_dw;
 		param_t X_u;
 		param_t Y_v;
 		param_t Z_w;
@@ -175,7 +178,8 @@ private:
 		math::Matrix<3, 3> K_r;         // orientation
 		math::Matrix<3, 3> K_w;         // angular velocity
 		// Hippocampus object parameters
-		float m;                        // mass and added mass
+		float m;                        // mass
+		math::Matrix<3, 3> M_A;         // added mass matrix
 		math::Matrix<3, 3> D;           // Damping Matrix
 		// Force and Moment scaling factors
 		float k_F;
@@ -197,6 +201,12 @@ private:
 
 	// update actual trajectory setpoint
 	void        trajectory_setpoint_poll();
+
+	// get orientation error
+	math::Vector<3> rotError(math::Matrix<3,3> R, math::Matrix<3,3> R_des);
+
+	// Get Flow Velocity
+	math::Vector<3> flowField(math::Vector<3> pos);
 
 	// path controller.
 	void		path_control(float dt);
@@ -258,6 +268,7 @@ HippocampusPathControl::HippocampusPathControl(char *type_ctrl) :
 	_params.K_r.zero();
 	_params.K_w.zero();
 	_params.m = 0.0f;
+	_params.M_A.zero();
 	_params.D.zero();
 	_params.L = 0.0f;
 	_params.OG = 0.0f;
@@ -301,6 +312,9 @@ HippocampusPathControl::HippocampusPathControl(char *type_ctrl) :
 	_params_handles.K_WY		    = 	param_find("PC_K_WY");
 	_params_handles.K_WZ		    = 	param_find("PC_K_WZ");
 	_params_handles.m		        = 	param_find("PC_m");
+    _params_handles.X_du		    = 	param_find("PC_X_du");
+	_params_handles.Y_dv		    = 	param_find("PC_Y_dv");
+	_params_handles.Z_dw		    = 	param_find("PC_Z_dw");
 	_params_handles.X_u		        = 	param_find("PC_X_u");
 	_params_handles.Y_v		        = 	param_find("PC_Y_v");
 	_params_handles.Z_w		        = 	param_find("PC_Z_w");
@@ -372,6 +386,12 @@ int HippocampusPathControl::parameters_update()
 	_params.K_w(2,2) = v;
 	param_get(_params_handles.m, &v);
 	_params.m = v;
+	param_get(_params_handles.X_du, &v);
+	_params.M_A(0, 0) = v;
+	param_get(_params_handles.Y_dv, &v);
+	_params.M_A(1, 1) = v;
+	param_get(_params_handles.Z_dw, &v);
+	_params.M_A(2, 2) = v;
 	param_get(_params_handles.X_u, &v);
 	_params.D(0, 0) = v;
 	param_get(_params_handles.Y_v, &v);
@@ -467,6 +487,68 @@ void HippocampusPathControl::trajectory_setpoint_poll()
 	}
 }
 
+// Gives back orientation error between R and R_des
+math::Vector<3> HippocampusPathControl::rotError(math::Matrix<3,3> R, math::Matrix<3,3> R_des)
+{
+    // extract orientation vectors
+    math::Vector<3> x_B = R.get_colValues(0);
+    math::Vector<3> x_B_des = R_des.get_colValues(0);
+    math::Vector<3> z_B_des = R_des.get_colValues(2);
+
+    // extracting one rotation from the rotation matrix, necessary due to singularities in the (R_des^T * R - R^T * R_des) approach
+	// rotation axis for rotation between x_B and x_B_des, in B coordinates (not normalized yet)
+	math::Vector<3> e_r = R.transposed() * (x_B_des % x_B);
+
+	// calculate the angle errors using norm of cross product and dot product
+	float x_B_sin = e_r.length();
+	float x_B_cos = x_B * x_B_des;
+
+	// rotation matrix after pitch/yaw only rotation, thus between R and R_py are only a roll rotation left
+	math::Matrix<3, 3> R_py;
+
+	// check if x_B and x_B_des are non parallel, otherwise we would not have rotations pitch and yaw
+	if (x_B_sin > 0.0f) {
+		// calculate axis angle representation of the pitch/yaw rotation
+		float e_R_angle = atan2f(x_B_sin, x_B_cos);
+		math::Vector<3> e_R_axis = e_r / x_B_sin;           // normalize axis
+
+		// get the error vector of the rotation in B coordinates
+		e_r = e_R_axis * e_R_angle;
+
+		// get the cross product matrix for e_R_axis to calculate the Rodrigues formula
+		math::Matrix<3, 3> e_R_cp;
+		e_R_cp.zero();
+		e_R_cp(0, 1) = -e_R_axis(2);
+		e_R_cp(0, 2) = e_R_axis(1);
+		e_R_cp(1, 0) = e_R_axis(2);
+		e_R_cp(1, 2) = -e_R_axis(0);
+		e_R_cp(2, 0) = -e_R_axis(1);
+		e_R_cp(2, 1) = e_R_axis(0);
+
+		// rotation matrix after pitch/yaw only rotation, thus between R and R_py are only a roll rotation left, in World coordinates
+		R_py = R * (_I + e_R_cp * x_B_sin + e_R_cp * e_R_cp * (1.0f - x_B_cos));
+
+	} else {
+		// zero pitch/yaw rotation
+		R_py = R;
+	}
+
+	//R_py and R_des have the same X axis, calculate roll error
+	math::Vector<3> z_B_py(R_py(0, 2), R_py(1, 2), R_py(2, 2));
+	e_r(0) = atan2f((z_B_des % z_B_py) * x_B_des, z_B_py * z_B_des);
+
+	return e_r;
+}
+
+math::Vector<3> HippocampusPathControl::flowField(math::Vector<3> pos)
+{
+  // Get Current Velocity, only irrotational velocities considered
+  math::Vector<3> flowVel(0.0f, 0.0f, 0.0f);            // Initialize Flow Velocity
+  if (pos(1) > 2.0f && pos(1) < 6.0f) {                 // Check if Field is in current
+    flowVel(0) = 0.0f;
+  }
+  return flowVel;
+}
 
 /**
  * path controller.
@@ -541,6 +623,13 @@ void HippocampusPathControl::path_control(float dt)
 	math::Vector<3> y_B_des;                                                    // orientation body y-axis desired
 	math::Vector<3> z_B_des;                                                    // orientation body z-axis desired
 
+	// Get Flow Velocity
+	math::Vector<3> flowVel = flowField(r);
+
+	// Transform Matrices into World coordinates
+	math::Matrix<3,3> M_A_W = R * _params.M_A * R.transposed();
+	math::Matrix<3,3> D_W = R * _params.D * R.transposed();
+
 	if (!strcmp(type_array, "full")) {
 	    math::Vector<3> z_C_des(0, -sinf(_v_traj_sp.roll), cosf(_v_traj_sp.roll));    // orientation C-Coordinate system desired
 	    math::Vector<3> y_C_des(0, cosf(_v_traj_sp.roll), sinf(_v_traj_sp.roll));     // orientation C-Coordinate system desired
@@ -550,31 +639,59 @@ void HippocampusPathControl::path_control(float dt)
 	    math::Vector<3> h_w_des;
 
 	    // thrust input
-	    e_p = r - r_T;          // calculate position error
-	    e_v = rd - rd_T;        // calculate velocity error
+	    e_p = r - r_T;                      // calculate position error
+	    e_v = rd - rd_T;                    // calculate velocity error
 
-	    F_des = -_params.K_p * e_p - _params.K_v * e_v + rdd_T * _params.m + _params.D * rd_T; // calculate desired force
+        // calculate desired force
+        math::Vector<3> rd_e = rd_T - flowVel;
+	    F_des = - _params.K_p * e_p - _params.K_v * e_v + rdd_T * _params.m + M_A_W * rdd_T + D_W * rd_e;
 
 	    u_1 = F_des * x_B;                                 // calculate desired thrust
 
 	    // calculate orientation vectors
 	    x_B_des = F_des / F_des.length();
 
-	    // check wether y_B_des is closer to the actual position or z_B_des
-	    // TO DO: Find a fix for singularity
-	    y_B_des = z_C_des % x_B_des;
-	    y_B_des = y_B_des / y_B_des.length();
-	    z_B_des = x_B_des % y_B_des;
+	    // check wether a rotation matrix created using y_B_des is closer to the actual position or z_B_des
+	    math::Vector<3> y_B_des_1 = z_C_des % x_B_des;
+	    y_B_des_1 = y_B_des_1 / y_B_des_1.length();
+	    math::Vector<3> z_B_des_1 = x_B_des % y_B_des_1;
 
-	    // calculate desired rotation matrix
-	    R_des.set_col(0, x_B_des);
-	    R_des.set_col(1, y_B_des);
-	    R_des.set_col(2, z_B_des);
+	    math::Vector<3> z_B_des_2 = x_B_des % y_C_des;
+	    z_B_des_2 = z_B_des_2 / z_B_des_2.length();
+	    math::Vector<3> y_B_des_2 = z_B_des_2 % x_B_des;
+
+	    // calculate desired rotation matrix and error
+	    math::Matrix<3,3> R_des_1;
+	    R_des_1.set_col(0, x_B_des);
+	    R_des_1.set_col(1, y_B_des_1);
+	    R_des_1.set_col(2, z_B_des_1);
+	    math::Vector<3> e_r_1 = rotError(R, R_des_1);
+
+	    math::Matrix<3,3> R_des_2;
+	    R_des_2.set_col(0, x_B_des);
+	    R_des_2.set_col(1, y_B_des_2);
+	    R_des_2.set_col(2, z_B_des_2);
+	    math::Vector<3> e_r_2 = rotError(R, R_des_2);
+
+	    // check which orientation error is smaller and use this as desired orientation
+	    if (e_r_1.length() < e_r_2.length()) {
+	        e_r = e_r_1;
+	        R_des = R_des_1;
+	        y_B_des = y_B_des_1;
+	        z_B_des = z_B_des_1;
+	    } else {
+	        e_r = e_r_2;
+	        R_des = R_des_2;
+	        y_B_des = y_B_des_2;
+	        z_B_des = z_B_des_2;
+	    }
+
+        float d = 10;
+        float m_a = 1.5;
 
 	    // Calculate desired angular velocity
-	    h_w_des = (rddd_T * _params.m + _params.D * rdd_T - (x_B_des * ((rddd_T * _params.m + _params.D * rdd_T) * x_B_des)))
-		    * (1 / u_1);
-	    //h_w_des = (rddd_T-x_B_des*(x_B_des*rddd_T))*(_params.m/u_1);
+	    h_w_des = (rddd_T * _params.m + rddd_T * m_a + rdd_T * d - (x_B_des * ((rddd_T * _params.m + rddd_T * m_a
+	                + rdd_T * d) * x_B_des))) * (1 / u_1);
 
 	    double q_ang = -h_w_des * z_B_des;
 	    double r_ang = -h_w_des * y_B_des;
@@ -602,6 +719,8 @@ void HippocampusPathControl::path_control(float dt)
 	    R_des(2,1) = s_roll*c_pitch;
 	    R_des(2,2) = c_roll*c_pitch;
 
+	    e_r = rotError(R, R_des);
+
 	    x_B_des = R_des.get_colValues(0);
 	    y_B_des = R_des.get_colValues(1);
 	    z_B_des = R_des.get_colValues(2);
@@ -609,48 +728,6 @@ void HippocampusPathControl::path_control(float dt)
 	    u_1 = 0.0f;
 	    e_w = R.transposed() * w_BW;
 	}
-
-	// extracting one rotation from the rotation matrix, necessary due to singularities in the (R_des^T * R - R^T * R_des) approach
-	// rotation axis for rotation between x_B and x_B_des, in B coordinates (not normalized yet)
-	e_r = R.transposed() * (x_B_des % x_B);
-
-	// calculate the angle errors using norm of cross product and dot product
-	float x_B_sin = e_r.length();
-	float x_B_cos = x_B * x_B_des;
-
-	// rotation matrix after pitch/yaw only rotation, thus between R and R_py are only a roll rotation left
-	math::Matrix<3, 3> R_py;
-
-	// check if x_B and x_B_des are non parallel, otherwise we would not have rotations pitch and yaw
-	if (x_B_sin > 0.0f) {
-		// calculate axis angle representation of the pitch/yaw rotation
-		float e_R_angle = atan2f(x_B_sin, x_B_cos);
-		math::Vector<3> e_R_axis = e_r / x_B_sin;           // normalize axis
-
-		// get the error vector of the rotation in B coordinates
-		e_r = e_R_axis * e_R_angle;
-
-		// get the cross product matrix for e_R_axis to calculate the Rodrigues formula
-		math::Matrix<3, 3> e_R_cp;
-		e_R_cp.zero();
-		e_R_cp(0, 1) = -e_R_axis(2);
-		e_R_cp(0, 2) = e_R_axis(1);
-		e_R_cp(1, 0) = e_R_axis(2);
-		e_R_cp(1, 2) = -e_R_axis(0);
-		e_R_cp(2, 0) = -e_R_axis(1);
-		e_R_cp(2, 1) = e_R_axis(0);
-
-		// rotation matrix after pitch/yaw only rotation, thus between R and R_py are only a roll rotation left, in World coordinates
-		R_py = R * (_I + e_R_cp * x_B_sin + e_R_cp * e_R_cp * (1.0f - x_B_cos));
-
-	} else {
-		// zero pitch/yaw rotation
-		R_py = R;
-	}
-
-	//R_py and R_des have the same X axis, calculate roll error
-	math::Vector<3> z_B_py(R_py(0, 2), R_py(1, 2), R_py(2, 2));
-	e_r(0) = atan2f((z_B_des % z_B_py) * x_B_des, z_B_py * z_B_des);
 
 	// calculate input over feedback loop
 	u_24 = -_params.K_r * e_r - _params.K_w * e_w;
@@ -687,11 +764,13 @@ void HippocampusPathControl::path_control(float dt)
 	// Reduce Input signal by a certain percentage
 	mix_input = mix_input * _params.OG;
 
+    if (_v_traj_sp.start == 1) {
 	// give the inputs to the actuators
 	_actuators.control[0] = mix_input(0);           // roll
 	_actuators.control[1] = mix_input(1);           // pitch
 	_actuators.control[2] = mix_input(2);           // yaw
 	_actuators.control[3] = mix_input(3);           // thrust
+	}
 
 	// store logging data for publishing
 	_logging_hippocampus.x = r(0);
@@ -725,14 +804,18 @@ void HippocampusPathControl::path_control(float dt)
 	_logging_hippocampus.zad[1] = z_B_des(1);
 	_logging_hippocampus.zad[2] = z_B_des(2);
 
+    _logging_hippocampus.xvc = flowVel(0);
+    _logging_hippocampus.yvc = flowVel(1);
+    _logging_hippocampus.zvc = flowVel(2);
+
 	_logging_hippocampus.t = t_ges;
 
 	// Debugging
 	if (counter < t_ges) {
 
-		counter = counter + 0.5f;            // every 0.5 seconds
+		counter = counter + 3.0f;            // every 0.5 seconds
 
-		PX4_INFO("e_p:\t%8.2f\t%8.2f\t%8.2f",
+		/*PX4_INFO("e_p:\t%8.2f\t%8.2f\t%8.2f",
 			 (double)e_p(0),
 			 (double)e_p(1),
 			 (double)e_p(2));
@@ -747,7 +830,15 @@ void HippocampusPathControl::path_control(float dt)
 		PX4_INFO("e_w:\t%8.2f\t%8.2f\t%8.2f\n",
 			 (double)e_w(0),
 			 (double)e_w(1),
-			 (double)e_w(2));
+			 (double)e_w(2));*/
+		/*PX4_INFO("r:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)r(0),
+			 (double)r(1),
+			 (double)r(2));*/
+		PX4_INFO("PP:\t%8.2f\t%8.2f\t%8.2f",
+			 (double)r(0),
+			 (double)r(1),
+			 (double)r(2));
 	}
 
 }

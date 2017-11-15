@@ -565,6 +565,19 @@ public:
 
 		return euler;
 	}
+
+	void hat_map(const Vector<3> &v)
+	{
+		data[0][0] = 0.0f;
+		data[0][1] = -v.data[2];
+		data[0][2] = v.data[1];
+		data[1][0] = v.data[2];
+		data[1][1] = 0.0f;
+		data[1][2] = -v.data[0];
+		data[2][0] = -v.data[1];
+		data[2][1] = v.data[0];
+		data[2][2] = 0.0f;
+	}
 };
 
 }

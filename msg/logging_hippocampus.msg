@@ -16,4 +16,8 @@ float32[3] xad  # desired orientation x-axis in NED
 float32[3] yad  # desired orientation y-axis in NED
 float32[3] zad  # desired orientation z-axis in NED
 
+float32 xvc		# flow velocity x-direction in meters/s NED
+float32 yvc		# flow velocity y-direction in meters/s NED
+float32 zvc		# flow velocity z-direction in meters/s NED
+
 float32 t       # time

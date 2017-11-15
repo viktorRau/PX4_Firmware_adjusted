@@ -28,8 +28,8 @@ commander start
 ekf2 start
 
 commander arm
-path_controller start
 stomp_path_planner start
+path_controller full
 
 mavlink start -u 14556 -r 4000000
 mavlink start -u 14557 -r 4000000 -m onboard -o 14540

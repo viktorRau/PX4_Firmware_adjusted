@@ -15,4 +15,7 @@ float32 dddx		# in meters/(sec*sec)
 float32 dddy		# in meters/(sec*sec)
 float32 dddz		# in meters/(sec*sec)
 
+float32 phi
+float32 psi
 
+uint8   start   # 0: nothing published, 1: data published
